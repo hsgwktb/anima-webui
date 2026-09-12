@@ -1,0 +1,1939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stable Diffusion</title>
+<style>
+/* ============================================================
+   A1111-style frontend for Anima.
+   Palette mirrors Gradio's Default dark theme (slate neutrals +
+   orange primary) which is what AUTOMATIC1111 ships with.
+   ============================================================ */
+:root{
+  --body-bg:#0b0f19;
+  --block-bg:#161c2b;
+  --panel-bg:#111827;
+  --input-bg:#1f2937;
+  --input-bg-hover:#273449;
+  --border:#2f3b52;
+  --border-strong:#3f4d66;
+  --text:#e5e7eb;
+  --text-subdued:#9ca3af;
+  --text-dim:#6b7280;
+  --orange:#f97316;
+  --orange-hover:#fb8c3c;
+  --orange-dim:#c2410c;
+  --blue:#60a5fa;
+  --radius:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--body-bg);
+  color:var(--text);
+  font-family:"Source Sans Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-size:14px;
+  line-height:1.5;
+}
+button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.gradio-container{max-width:1600px;margin:0 auto;padding:8px 16px 0}
+
+/* ---------- quicksettings row (checkpoint / vae / clip) ---------- */
+.quicksettings{
+  display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;
+  padding:8px 0;
+}
+.qs-item{display:flex;flex-direction:column;gap:4px;min-width:220px;flex:1 1 220px}
+.qs-item label{font-size:12px;color:var(--text-subdued)}
+.qs-item select{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:6px 8px;width:100%;height:34px;
+}
+.qs-item.narrow{min-width:150px;flex:0 1 170px}
+
+/* ---------- tab bar ---------- */
+.tab-nav{
+  display:flex;gap:2px;border-bottom:1px solid var(--border);
+  margin-bottom:10px;flex-wrap:wrap;
+}
+.tab-nav button{
+  background:transparent;border:0;border-bottom:2px solid transparent;
+  padding:9px 16px;color:var(--text-subdued);cursor:pointer;
+  border-radius:6px 6px 0 0;font-size:14px;
+}
+.tab-nav button:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.tab-nav button.selected{
+  color:#fff;background:var(--block-bg);border-bottom-color:var(--orange);font-weight:600;
+}
+
+/* ---------- main two-column layout ---------- */
+.main-row{display:flex;gap:16px;align-items:flex-start}
+.settings-col{flex:1 1 50%;min-width:420px;display:flex;flex-direction:column;gap:10px}
+.output-col{flex:1 1 50%;min-width:380px;display:flex;flex-direction:column;gap:10px}
+
+/* ---------- toprow: prompt + actions ---------- */
+.toprow{display:flex;gap:8px;align-items:stretch}
+.prompt-container{flex:6 1 0;min-width:0;display:flex;flex-direction:column;gap:8px}
+.actions-column{flex:1 1 0;min-width:190px;max-width:250px;display:flex;flex-direction:column;gap:6px}
+textarea.prompt{
+  width:100%;background:var(--input-bg);border:1px solid var(--border);
+  border-radius:var(--radius);padding:9px 11px;resize:vertical;
+  min-height:76px;outline:none;
+}
+textarea.prompt:focus{border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+textarea.prompt::placeholder{color:var(--text-dim)}
+#txt2img_prompt{min-height:88px}
+
+.generate-box{position:relative}
+button.generate{
+  width:100%;min-height:4.5em;background:var(--orange);color:#fff;border:0;
+  border-radius:var(--radius);font-size:17px;font-weight:600;cursor:pointer;
+}
+button.generate:hover{background:var(--orange-hover)}
+button.generate:disabled{background:#5a4630;color:#b9a894;cursor:not-allowed}
+.gen-overlay{
+  position:absolute;inset:0;display:none;gap:0;
+}
+.gen-overlay.active{display:flex}
+.gen-overlay button{
+  width:50%;height:100%;border:0;cursor:pointer;background:#b4c0cc;color:#1f2937;
+  font-weight:600;
+}
+.gen-overlay button:hover{background:#c2cfdb}
+.gen-overlay .interrupt{border-radius:var(--radius) 0 0 var(--radius)}
+.gen-overlay .skip{border-radius:0 var(--radius) var(--radius) 0}
+
+.style-row{display:flex;gap:6px;align-items:center}
+.style-row select{
+  flex:1 1 0;min-width:0;background:var(--input-bg);border:1px solid var(--border);
+  border-radius:var(--radius);padding:6px;height:34px;font-size:13px;
+}
+.tools-row{display:flex;gap:5px}
+button.tool{
+  flex:0 0 auto;background:var(--input-bg);border:1px solid var(--border);
+  border-radius:6px;color:var(--text-subdued);height:30px;min-width:32px;
+  padding:0 8px;cursor:pointer;font-size:13px;
+}
+button.tool:hover{background:var(--input-bg-hover);color:var(--text)}
+.token-counter{font-size:11px;color:var(--text-dim);text-align:right}
+
+/* ---------- accordions ---------- */
+.accordion{
+  background:var(--block-bg);border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;
+}
+.accordion > .acc-head{
+  display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;
+  font-weight:600;font-size:14px;user-select:none;
+}
+.accordion > .acc-head:hover{background:rgba(255,255,255,.03)}
+.acc-head .chev{color:var(--text-subdued);font-size:11px;transition:transform .12s;width:10px}
+.accordion.open > .acc-head .chev{transform:rotate(90deg)}
+.acc-body{display:none;padding:0 12px 12px;flex-direction:column;gap:10px}
+.accordion.open > .acc-body{display:flex}
+.acc-inline{display:flex;gap:8px}
+.acc-inline .accordion{flex:1 1 0}
+
+/* ---------- form rows ---------- */
+.form-row{display:flex;gap:10px;align-items:flex-end}
+.form-row > .field{flex:1 1 0;min-width:0}
+.field{display:flex;flex-direction:column;gap:4px}
+.field > label,.slider-label{font-size:13px;color:var(--text-subdued)}
+select.sd-input{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:6px 8px;height:34px;width:100%;
+}
+input.sd-input{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:6px 8px;height:34px;width:100%;
+}
+input.sd-input:focus,select.sd-input:focus{border-color:var(--orange);outline:none}
+
+/* slider: range + number box, like gradio */
+.slider{display:flex;gap:8px;align-items:center}
+.slider input[type=range]{
+  -webkit-appearance:none;appearance:none;flex:1 1 0;min-width:0;height:4px;
+  background:var(--border-strong);border-radius:2px;outline:none;margin:0;
+}
+.slider input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+  background:#e5e7eb;cursor:pointer;border:1px solid #9ca3af;
+}
+.slider input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;background:#e5e7eb;cursor:pointer;border:1px solid #9ca3af;
+}
+.slider input[type=number]{
+  flex:0 0 76px;width:76px;background:var(--input-bg);border:1px solid var(--border);
+  border-radius:6px;padding:5px 7px;height:32px;text-align:center;
+}
+.slider input[type=number]:focus{border-color:var(--orange);outline:none}
+
+/* checkbox */
+.check{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)}
+.check input[type=checkbox]{
+  -webkit-appearance:none;appearance:none;width:16px;height:16px;margin:0;
+  background:var(--input-bg);border:1px solid var(--border-strong);border-radius:4px;
+  cursor:pointer;position:relative;flex:0 0 auto;
+}
+.check input[type=checkbox]:checked{background:var(--orange);border-color:var(--orange)}
+.check input[type=checkbox]:checked::after{
+  content:"";position:absolute;left:5px;top:1px;width:4px;height:9px;
+  border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);
+}
+.dims-tools{flex:0 0 auto;display:flex;align-items:flex-end;padding-bottom:1px}
+
+/* ---------- output panel ---------- */
+.progress-wrap{display:none;flex-direction:column;gap:4px;margin-bottom:2px}
+.progress-wrap.active{display:flex}
+.progress-bar{
+  height:8px;background:var(--input-bg);border-radius:4px;overflow:hidden;
+}
+.progress-fill{height:100%;width:0;background:var(--orange);transition:width .25s linear}
+.progress-fill.indeterminate{
+  width:35%;animation:slide 1.3s ease-in-out infinite;
+}
+@keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+.progress-text{font-size:12px;color:var(--text-subdued);display:flex;justify-content:space-between}
+
+.gallery{
+  background:var(--block-bg);border:1px solid var(--border);border-radius:var(--radius);
+  min-height:440px;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative;
+}
+.gallery img{max-width:100%;max-height:78vh;display:block}
+.gallery .empty{
+  color:var(--text-dim);font-size:14px;text-align:center;padding:24px;line-height:1.8;
+}
+.gallery .empty code{
+  background:var(--input-bg);padding:1px 5px;border-radius:4px;color:var(--text-subdued);
+  font-family:ui-monospace,Consolas,monospace;
+}
+.gallery-nav{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  display:flex;gap:6px;background:rgba(0,0,0,.55);padding:4px 8px;border-radius:14px;
+  font-size:12px;color:#e5e7eb;
+}
+.gallery-nav button{
+  background:transparent;border:0;color:#e5e7eb;cursor:pointer;font-size:14px;padding:0 4px;
+}
+.out-buttons{display:flex;flex-wrap:wrap;gap:6px}
+button.out-btn{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:6px;
+  color:var(--text-subdued);padding:6px 10px;cursor:pointer;font-size:12.5px;
+}
+button.out-btn:hover{background:var(--input-bg-hover);color:var(--text)}
+.geninfo{
+  background:var(--block-bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:9px 11px;font-size:12.5px;color:var(--text-subdued);
+  font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;
+  max-height:150px;overflow:auto;
+}
+.geninfo:empty::before{content:"Generation parameters will appear here.";color:var(--text-dim)}
+
+/* ============================================================
+   Extra networks (A1111 "Lora" / "Checkpoints" card tabs)
+   Rules ported from AUTOMATIC1111 style.css (AGPL-3.0).
+   ============================================================ */
+.extra-tabs-row{display:flex;align-items:flex-end;gap:6px}
+.extra-tabs{flex:1;margin-bottom:0;border-bottom:1px solid var(--border)}
+.extra-tabs button{font-size:13.5px;padding:7px 14px}
+.extra-tabs-collapsed #txt2img_extra_tabs{display:none}
+button.en-collapse{
+  background:var(--input-bg);border:1px solid var(--border);color:var(--text-subdued);
+  border-radius:6px;cursor:pointer;padding:6px 10px;height:32px;margin-bottom:1px;
+}
+button.en-collapse:hover{background:var(--input-bg-hover);color:var(--text)}
+.extra-tabs-collapsed button.en-collapse{transform:rotate(180deg)}
+
+.extra-network-pane{
+  display:flex;height:calc(100vh - 24rem);resize:vertical;min-height:34rem;
+  flex-direction:column;overflow:hidden;
+}
+.extra-network-pane-content-dirs{display:flex;flex:1;flex-direction:column;overflow:hidden}
+.extra-network-pane .extra-network-dirs{
+  flex:1;overflow:auto;padding:2px;display:flex;flex-direction:column;gap:2px;
+  border:1px solid var(--border);border-right:0;border-radius:var(--radius) 0 0 var(--radius);
+}
+.extra-network-pane.extra-network-dirs-hidden .extra-network-dirs{display:none}
+.extra-network-pane.extra-network-dirs-hidden .extra-network-cards{border-radius:var(--radius)}
+.extra-network-dirs button{
+  background:transparent;border:0;color:var(--text-subdued);text-align:left;
+  padding:5px 9px;border-radius:5px;cursor:pointer;font-size:13px;font-family:inherit;
+}
+.extra-network-dirs button:hover{background:var(--input-bg-hover);color:var(--text)}
+.extra-network-pane .extra-network-cards{
+  flex:3;overflow:auto;border:1px solid var(--border);
+  border-radius:0 var(--radius) var(--radius) 0;padding:2px 6px 6px;
+}
+.extra-network-pane .extra-network-cards::-webkit-scrollbar,
+.extra-network-pane .extra-network-dirs::-webkit-scrollbar{width:14px;background:transparent}
+.extra-network-pane .extra-network-cards::-webkit-scrollbar-thumb,
+.extra-network-pane .extra-network-dirs::-webkit-scrollbar-thumb{
+  background-color:var(--border-strong);border-radius:14px;border:4px solid var(--body-bg);
+}
+
+.extra-network-control{
+  display:flex;align-items:center;width:100%;user-select:none;gap:2px;
+  background:transparent;border:0;padding:0;margin:0 0 4px;font-size:1rem;
+}
+.extra-network-control small{color:var(--text-dim);line-height:2.2rem;margin:0 .5rem 0 .75rem}
+input.extra-network-control--search-text{
+  width:16rem;background:var(--input-bg);border:1px solid var(--border);
+  border-radius:6px;padding:5px 9px;height:32px;
+}
+input.extra-network-control--search-text:focus{border-color:var(--orange);outline:none}
+.extra-network-control--sort,.extra-network-control--sort-dir,
+.extra-network-control--tree-view,.extra-network-control--refresh{
+  padding:.25rem;display:inline-flex;cursor:pointer;align-items:center;
+}
+.extra-network-control--icon{
+  height:1.5rem;width:1.5rem;display:inline-block;
+  -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;
+  -webkit-mask-position:center center;mask-position:center center;
+  -webkit-mask-size:100%;mask-size:100%;
+  background-color:var(--text-dim);
+}
+.extra-network-control--sort.extra-network-control--enabled .extra-network-control--icon,
+.extra-network-control--enabled .extra-network-control--icon{background-color:var(--orange)}
+.extra-network-control--enabled{background-color:rgba(255,255,255,.10);border-radius:.25rem}
+.extra-network-control--refresh-icon:active{transform:rotate(180deg);transition:transform .2s}
+
+.extra-network-control--sort[data-sortkey="default"] .extra-network-control--sort-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path fill-rule="evenodd" clip-rule="evenodd" d="M1 5C1 3.34315 2.34315 2 4 2H8.43845C9.81505 2 11.015 2.93689 11.3489 4.27239L11.7808 6H13.5H20C21.6569 6 23 7.34315 23 9V11C23 11.5523 22.5523 12 22 12C21.4477 12 21 11.5523 21 11V9C21 8.44772 20.5523 8 20 8H13.5H11.7808H4C3.44772 8 3 8.44772 3 9V10V19C3 19.5523 3.44772 20 4 20H9C9.55228 20 10 20.4477 10 21C10 21.5523 9.55228 22 9 22H4C2.34315 22 1 20.6569 1 19V10V9V5ZM3 6.17071C3.31278 6.06015 3.64936 6 4 6H9.71922L9.40859 4.75746C9.2973 4.3123 8.89732 4 8.43845 4H4C3.44772 4 3 4.44772 3 5V6.17071ZM20.1716 18.7574C20.6951 17.967 21 17.0191 21 16C21 13.2386 18.7614 11 16 11C13.2386 11 11 13.2386 11 16C11 18.7614 13.2386 21 16 21C17.0191 21 17.967 20.6951 18.7574 20.1716L21.2929 22.7071C21.6834 23.0976 22.3166 23.0976 22.7071 22.7071C23.0976 22.3166 23.0976 21.6834 22.7071 21.2929L20.1716 18.7574ZM13 16C13 14.3431 14.3431 13 16 13C17.6569 13 19 14.3431 19 16C19 17.6569 17.6569 19 16 19C14.3431 19 13 17.6569 13 16Z" fill="%23000000"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path fill-rule="evenodd" clip-rule="evenodd" d="M1 5C1 3.34315 2.34315 2 4 2H8.43845C9.81505 2 11.015 2.93689 11.3489 4.27239L11.7808 6H13.5H20C21.6569 6 23 7.34315 23 9V11C23 11.5523 22.5523 12 22 12C21.4477 12 21 11.5523 21 11V9C21 8.44772 20.5523 8 20 8H13.5H11.7808H4C3.44772 8 3 8.44772 3 9V10V19C3 19.5523 3.44772 20 4 20H9C9.55228 20 10 20.4477 10 21C10 21.5523 9.55228 22 9 22H4C2.34315 22 1 20.6569 1 19V10V9V5ZM3 6.17071C3.31278 6.06015 3.64936 6 4 6H9.71922L9.40859 4.75746C9.2973 4.3123 8.89732 4 8.43845 4H4C3.44772 4 3 4.44772 3 5V6.17071ZM20.1716 18.7574C20.6951 17.967 21 17.0191 21 16C21 13.2386 18.7614 11 16 11C13.2386 11 11 13.2386 11 16C11 18.7614 13.2386 21 16 21C17.0191 21 17.967 20.6951 18.7574 20.1716L21.2929 22.7071C21.6834 23.0976 22.3166 23.0976 22.7071 22.7071C23.0976 22.3166 23.0976 21.6834 22.7071 21.2929L20.1716 18.7574ZM13 16C13 14.3431 14.3431 13 16 13C17.6569 13 19 14.3431 19 16C19 17.6569 17.6569 19 16 19C14.3431 19 13 17.6569 13 16Z" fill="%23000000"></path></g></svg>');
+}
+.extra-network-control--sort[data-sortkey="name"] .extra-network-control--sort-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path fill-rule="evenodd" clip-rule="evenodd" d="M17.1841 6.69223C17.063 6.42309 16.7953 6.25 16.5002 6.25C16.2051 6.25 15.9374 6.42309 15.8162 6.69223L11.3162 16.6922C11.1463 17.07 11.3147 17.514 11.6924 17.6839C12.0701 17.8539 12.5141 17.6855 12.6841 17.3078L14.1215 14.1136H18.8789L20.3162 17.3078C20.4862 17.6855 20.9302 17.8539 21.308 17.6839C21.6857 17.514 21.8541 17.07 21.6841 16.6922L17.1841 6.69223ZM16.5002 8.82764L14.7965 12.6136H18.2039L16.5002 8.82764Z" fill="%231C274C"></path><path opacity="0.5" fill-rule="evenodd" clip-rule="evenodd" d="M2.25 7C2.25 6.58579 2.58579 6.25 3 6.25H13C13.4142 6.25 13.75 6.58579 13.75 7C13.75 7.41421 13.4142 7.75 13 7.75H3C2.58579 7.75 2.25 7.41421 2.25 7Z" fill="%231C274C"></path><path opacity="0.5" d="M2.25 12C2.25 11.5858 2.58579 11.25 3 11.25H10C10.4142 11.25 10.75 11.5858 10.75 12C10.75 12.4142 10.4142 12.75 10 12.75H3C2.58579 12.75 2.25 12.4142 2.25 12Z" fill="%231C274C"></path><path opacity="0.5" d="M2.25 17C2.25 16.5858 2.58579 16.25 3 16.25H8C8.41421 16.25 8.75 16.5858 8.75 17C8.75 17.4142 8.41421 17.75 8 17.75H3C2.58579 17.75 2.25 17.4142 2.25 17Z" fill="%231C274C"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path fill-rule="evenodd" clip-rule="evenodd" d="M17.1841 6.69223C17.063 6.42309 16.7953 6.25 16.5002 6.25C16.2051 6.25 15.9374 6.42309 15.8162 6.69223L11.3162 16.6922C11.1463 17.07 11.3147 17.514 11.6924 17.6839C12.0701 17.8539 12.5141 17.6855 12.6841 17.3078L14.1215 14.1136H18.8789L20.3162 17.3078C20.4862 17.6855 20.9302 17.8539 21.308 17.6839C21.6857 17.514 21.8541 17.07 21.6841 16.6922L17.1841 6.69223ZM16.5002 8.82764L14.7965 12.6136H18.2039L16.5002 8.82764Z" fill="%231C274C"></path><path opacity="0.5" fill-rule="evenodd" clip-rule="evenodd" d="M2.25 7C2.25 6.58579 2.58579 6.25 3 6.25H13C13.4142 6.25 13.75 6.58579 13.75 7C13.75 7.41421 13.4142 7.75 13 7.75H3C2.58579 7.75 2.25 7.41421 2.25 7Z" fill="%231C274C"></path><path opacity="0.5" d="M2.25 12C2.25 11.5858 2.58579 11.25 3 11.25H10C10.4142 11.25 10.75 11.5858 10.75 12C10.75 12.4142 10.4142 12.75 10 12.75H3C2.58579 12.75 2.25 12.4142 2.25 12Z" fill="%231C274C"></path><path opacity="0.5" d="M2.25 17C2.25 16.5858 2.58579 16.25 3 16.25H8C8.41421 16.25 8.75 16.5858 8.75 17C8.75 17.4142 8.41421 17.75 8 17.75H3C2.58579 17.75 2.25 17.4142 2.25 17Z" fill="%231C274C"></path></g></svg>');
+}
+.extra-network-control--sort[data-sortkey="date_created"] .extra-network-control--sort-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M17 11C14.2386 11 12 13.2386 12 16C12 18.7614 14.2386 21 17 21C19.7614 21 22 18.7614 22 16C22 13.2386 19.7614 11 17 11ZM17 11V9M2 9V15.8C2 16.9201 2 17.4802 2.21799 17.908C2.40973 18.2843 2.71569 18.5903 3.09202 18.782C3.51984 19 4.0799 19 5.2 19H13M2 9V8.2C2 7.0799 2 6.51984 2.21799 6.09202C2.40973 5.71569 2.71569 5.40973 3.09202 5.21799C3.51984 5 4.0799 5 5.2 5H13.8C14.9201 5 15.4802 5 15.908 5.21799C16.2843 5.40973 16.5903 5.71569 16.782 6.09202C17 6.51984 17 7.0799 17 8.2V9M2 9H17M5 3V5M14 3V5M15 16H17M17 16H19M17 16V14M17 16V18" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M17 11C14.2386 11 12 13.2386 12 16C12 18.7614 14.2386 21 17 21C19.7614 21 22 18.7614 22 16C22 13.2386 19.7614 11 17 11ZM17 11V9M2 9V15.8C2 16.9201 2 17.4802 2.21799 17.908C2.40973 18.2843 2.71569 18.5903 3.09202 18.782C3.51984 19 4.0799 19 5.2 19H13M2 9V8.2C2 7.0799 2 6.51984 2.21799 6.09202C2.40973 5.71569 2.71569 5.40973 3.09202 5.21799C3.51984 5 4.0799 5 5.2 5H13.8C14.9201 5 15.4802 5 15.908 5.21799C16.2843 5.40973 16.5903 5.71569 16.782 6.09202C17 6.51984 17 7.0799 17 8.2V9M2 9H17M5 3V5M14 3V5M15 16H17M17 16H19M17 16V14M17 16V18" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+}
+.extra-network-control--sort[data-sortkey="date_modified"] .extra-network-control--sort-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M10 21H6.2C5.0799 21 4.51984 21 4.09202 20.782C3.71569 20.5903 3.40973 20.2843 3.21799 19.908C3 19.4802 3 18.9201 3 17.8V8.2C3 7.0799 3 6.51984 3.21799 6.09202C3.40973 5.71569 3.71569 5.40973 4.09202 5.21799C4.51984 5 5.0799 5 6.2 5H17.8C18.9201 5 19.4802 5 19.908 5.21799C20.2843 5.40973 20.5903 5.71569 20.782 6.09202C21 6.51984 21 7.0799 21 8.2V10M7 3V5M17 3V5M3 9H21M13.5 13.0001L7 13M10 17.0001L7 17M14 21L16.025 20.595C16.2015 20.5597 16.2898 20.542 16.3721 20.5097C16.4452 20.4811 16.5147 20.4439 16.579 20.399C16.6516 20.3484 16.7152 20.2848 16.8426 20.1574L21 16C21.5523 15.4477 21.5523 14.5523 21 14C20.4477 13.4477 19.5523 13.4477 19 14L14.8426 18.1574C14.7152 18.2848 14.6516 18.3484 14.601 18.421C14.5561 18.4853 14.5189 18.5548 14.4903 18.6279C14.458 18.7102 14.4403 18.7985 14.405 18.975L14 21Z" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M10 21H6.2C5.0799 21 4.51984 21 4.09202 20.782C3.71569 20.5903 3.40973 20.2843 3.21799 19.908C3 19.4802 3 18.9201 3 17.8V8.2C3 7.0799 3 6.51984 3.21799 6.09202C3.40973 5.71569 3.71569 5.40973 4.09202 5.21799C4.51984 5 5.0799 5 6.2 5H17.8C18.9201 5 19.4802 5 19.908 5.21799C20.2843 5.40973 20.5903 5.71569 20.782 6.09202C21 6.51984 21 7.0799 21 8.2V10M7 3V5M17 3V5M3 9H21M13.5 13.0001L7 13M10 17.0001L7 17M14 21L16.025 20.595C16.2015 20.5597 16.2898 20.542 16.3721 20.5097C16.4452 20.4811 16.5147 20.4439 16.579 20.399C16.6516 20.3484 16.7152 20.2848 16.8426 20.1574L21 16C21.5523 15.4477 21.5523 14.5523 21 14C20.4477 13.4477 19.5523 13.4477 19 14L14.8426 18.1574C14.7152 18.2848 14.6516 18.3484 14.601 18.421C14.5561 18.4853 14.5189 18.5548 14.4903 18.6279C14.458 18.7102 14.4403 18.7985 14.405 18.975L14 21Z" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+}
+.extra-network-control--sort-dir[data-sortdir="Ascending"] .extra-network-control--sort-dir-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M13 12H21M13 8H21M13 16H21M6 7V17M6 7L3 10M6 7L9 10" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M13 12H21M13 8H21M13 16H21M6 7V17M6 7L3 10M6 7L9 10" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+}
+.extra-network-control--sort-dir[data-sortdir="Descending"] .extra-network-control--sort-dir-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M13 12H21M13 8H21M13 16H21M6 7V17M6 17L3 14M6 17L9 14" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_iconCarrier"><path d="M13 12H21M13 8H21M13 16H21M6 7V17M6 17L3 14M6 17L9 14" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>');
+}
+.extra-network-control--tree-view .extra-network-control--tree-view-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" fill="black"><g id="SVGRepo_iconCarrier"><path fill="black" d="M16 10v-4h-11v1h-2v-3h9v-4h-12v4h2v10h3v2h11v-4h-11v1h-2v-5h2v2z"></path></g></svg>');
+  mask-image:url('data:image/svg+xml,<svg viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" fill="black"><g id="SVGRepo_iconCarrier"><path fill="black" d="M16 10v-4h-11v1h-2v-3h9v-4h-12v4h2v10h3v2h11v-4h-11v1h-2v-5h2v2z"></path></g></svg>');
+}
+.extra-network-control--refresh .extra-network-control--refresh-icon{
+  -webkit-mask-image:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="bevel"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>');
+  mask-image:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="bevel"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>');
+}
+
+/* cards */
+.extra-network-pane .card{
+  display:inline-block;margin:.5rem;width:16rem;height:24rem;
+  box-shadow:0 0 5px rgba(128,128,128,.5);border-radius:.2rem;position:relative;
+  background-size:auto 100%;background-position:center;overflow:hidden;cursor:pointer;
+  background-image:url('/internal/preview');
+  background-color:#2b3445;
+}
+.extra-network-pane .card:hover{box-shadow:0 0 2px .3em rgba(0,128,255,.35)}
+.extra-network-pane .card .preview{position:absolute;object-fit:cover;width:100%;height:100%}
+.extra-network-pane .card .actions{
+  position:absolute;bottom:0;left:0;right:0;padding:.5em;background:rgba(0,0,0,.5);
+  box-shadow:0 0 0.25em .25em rgba(0,0,0,.5);text-shadow:0 0 .2em black;
+}
+.extra-network-pane .card .actions *{color:#fff}
+.extra-network-pane .card .actions .name{font-size:1.7em;font-weight:bold;line-break:anywhere}
+.extra-network-pane .card .actions .additional{display:none;font-size:.72em;opacity:.85;word-break:break-all;max-height:2.4em;overflow:hidden}
+.extra-network-pane .card .actions:hover .additional{display:block}
+.extra-network-pane .card .button-row{
+  position:absolute;right:0;z-index:1;display:inline-flex;visibility:hidden;
+}
+.extra-network-pane .card:hover .button-row{visibility:visible}
+.extra-network-pane .card-button{
+  width:1.5em;font-size:2rem;padding:.25em .1em;color:#fff;text-shadow:2px 2px 3px black;
+  background:none;border:0;cursor:pointer;line-height:1;
+}
+.extra-network-pane .card-button:hover{color:red}
+.extra-network-pane .copy-path-button::before{content:"\29D8"}
+.extra-network-pane .metadata-button::before{content:"\1F6C8"}
+.extra-network-pane .edit-button::before{content:"\1F6E0"}
+.extra-network-pane .card.is-active{box-shadow:0 0 2px .35em rgba(249,115,22,.55)}
+.extra-network-pane .nocards{margin:1.25em .5em .5em .5em;color:var(--text-subdued)}
+.extra-network-pane .nocards h1{font-size:1.5em;margin-bottom:1em;color:var(--text)}
+.extra-network-pane .nocards li{margin-left:.5em}
+.extra-network-pane .nocards code{background:var(--input-bg);padding:1px 5px;border-radius:4px}
+
+/* ============================================================
+   img2img: mode tabs, image drop zone, mask painting, radios
+   ============================================================ */
+.main-tab-pane{display:block}
+.extras-slot{margin-bottom:2px}
+.tab-nav.i2i-mode-tabs{margin-bottom:6px}
+.tab-nav.sub-tabs{margin-bottom:6px;border-bottom:1px solid var(--border)}
+.tab-nav.sub-tabs button{font-size:13px;padding:5px 12px}
+.i2i-pane{display:flex;flex-direction:column;gap:8px}
+.i2i-drop{
+  position:relative;border:1px dashed var(--border-strong);border-radius:var(--radius);
+  background:var(--input-bg);min-height:300px;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;cursor:pointer;
+}
+.i2i-drop.dragover{border-color:var(--orange);background:#243043}
+.i2i-drop > img{max-width:100%;max-height:430px;display:block}
+.i2i-hint{
+  position:absolute;left:0;right:0;bottom:0;padding:6px 10px;font-size:12px;
+  color:var(--text-subdued);background:rgba(0,0,0,.55);text-align:center;pointer-events:none;
+}
+.i2i-two{display:flex;gap:8px}
+.i2i-two .i2i-drop{flex:1 1 0;min-height:250px}
+.i2i-paint{display:block;padding:0;min-height:0;border:0;background:transparent;cursor:default}
+.i2i-stage{position:relative;display:inline-block;max-width:100%}
+.i2i-stage img{display:block;max-width:100%;max-height:430px}
+.i2i-stage canvas{position:absolute;left:0;top:0;cursor:crosshair;touch-action:none}
+.i2i-brush-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.i2i-brush-row button.tool.selected{background:var(--orange);color:#fff;border-color:var(--orange)}
+.radio-row{display:flex;flex-wrap:wrap;gap:12px}
+.radio-row label{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer}
+.radio-row input[type=radio]{
+  -webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+  border:1px solid var(--border-strong);background:var(--input-bg);margin:0;cursor:pointer;position:relative;
+}
+.radio-row input[type=radio]:checked{border-color:var(--orange);background:var(--orange)}
+.radio-row input[type=radio]:checked::after{
+  content:"";position:absolute;left:4px;top:4px;width:5px;height:5px;border-radius:50%;background:#fff;
+}
+
+/* ---------- footer ---------- */
+footer{
+  margin-top:18px;padding:14px 0 26px;border-top:1px solid var(--border);
+  color:var(--text-dim);font-size:12.5px;display:flex;justify-content:space-between;
+  flex-wrap:wrap;gap:8px;
+}
+footer .mono{font-family:ui-monospace,Consolas,monospace}
+.banner{
+  margin:8px 0 4px;padding:7px 11px;border-radius:6px;font-size:12.5px;
+  background:rgba(249,115,22,.09);border:1px solid rgba(249,115,22,.35);color:#fdba74;
+}
+.banner b{color:#fb923c}
+@media (max-width:1050px){
+  .main-row{flex-direction:column}
+  .settings-col,.output-col{min-width:0;width:100%}
+}
+</style>
+</head>
+<body>
+<div class="gradio-container">
+
+  <!-- quicksettings (checkpoint / vae / clip) -->
+  <div class="quicksettings">
+    <div class="qs-item">
+      <label>Stable Diffusion checkpoint</label>
+      <select id="sd_model_checkpoint"></select>
+    </div>
+    <div class="qs-item narrow">
+      <label>SD VAE</label>
+      <select id="sd_vae"><option>Automatic</option><option>qwen_image_vae.safetensors</option><option>None</option></select>
+    </div>
+    <div class="qs-item narrow">
+      <label>CLIP stop at last layers</label>
+      <input class="sd-input" id="clip_stop" type="number" value="1" min="1" max="12">
+    </div>
+  </div>
+
+  <!-- A1111's top-level tabs (gr.Tabs elem_id="tabs"). Only txt2img and img2img are wired up. -->
+  <div class="tab-nav" id="main_tabs">
+    <button class="selected" data-tab="txt2img" id="tab_txt2img_btn">txt2img</button>
+    <button data-tab="img2img" id="tab_img2img_btn">img2img</button>
+    <button title="Not implemented in this build">Extras</button>
+    <button title="Not implemented in this build">PNG Info</button>
+    <button title="Not implemented in this build">Checkpoint Merger</button>
+    <button title="Not implemented in this build">Train</button>
+    <button title="Not implemented in this build">Settings</button>
+    <button title="Not implemented in this build">Extensions</button>
+  </div>
+
+  <div id="tab_txt2img" class="main-tab-pane">
+  <div class="extras-slot" id="extras_slot_txt2img"></div>
+  <div id="txt2img_generation_pane">
+  <div class="main-row">
+    <!-- ==================== LEFT: settings ==================== -->
+    <div class="settings-col">
+      <div class="banner">
+        <b>Anima WebUI</b> — A1111-style front end for <span class="mono">anima-base-v1.0</span>
+        (CircleStone Labs / Comfy Org, Cosmos-Predict2 2B + Qwen3-0.6B text encoder).
+        Backend: local ComfyUI via the A1111-compatible <span class="mono">/sdapi/v1</span> API.
+      </div>
+
+      <div class="toprow">
+        <div class="prompt-container">
+          <textarea class="prompt" id="txt2img_prompt" placeholder="Prompt&#10;(Press Ctrl+Enter to generate, Alt+Enter to skip, Esc to interrupt)"></textarea>
+          <textarea class="prompt" id="txt2img_neg_prompt" placeholder="Negative prompt&#10;(Press Ctrl+Enter to generate, Alt+Enter to skip, Esc to interrupt)"></textarea>
+        </div>
+        <div class="actions-column">
+          <div class="generate-box">
+            <button class="generate" id="txt2img_generate">Generate</button>
+            <div class="gen-overlay" id="gen_overlay">
+              <button class="interrupt" id="txt2img_interrupt">Interrupt</button>
+              <button class="skip" id="txt2img_skip">Skip</button>
+            </div>
+          </div>
+          <div class="style-row">
+            <select id="style1"><option>None</option></select>
+            <select id="style2"><option>None</option></select>
+            <button class="tool" id="style_apply" title="Apply all selected styles to prompts">&#10024;</button>
+          </div>
+          <div class="tools-row">
+            <button class="tool" id="btn_random" title="Randomize seed">&#127922;</button>
+            <button class="tool" id="btn_reuse" title="Reuse last seed">&#8635;</button>
+            <button class="tool" id="btn_paste" title="Read generation parameters from the Generation box">&#128203;</button>
+            <button class="tool" id="btn_clear" title="Clear prompt">&#128465;</button>
+          </div>
+          <div class="token-counter" id="token_counter">0/75</div>
+        </div>
+      </div>
+
+      <!-- Hires. fix / Refiner -->
+      <div class="form-row" style="align-items:flex-start">
+        <div class="accordion" id="acc_hires" style="flex:1 1 0">
+          <div class="acc-head">
+            <span class="chev">&#9656;</span>
+            <span class="check" onclick="event.stopPropagation()">
+              <input type="checkbox" id="enable_hr">
+            </span>
+            <span>Hires. fix</span>
+          </div>
+          <div class="acc-body">
+            <div class="form-row">
+              <div class="field"><label>Upscaler</label>
+                <select class="sd-input" id="hr_upscaler">
+                  <option>Latent</option><option>Nearest</option><option>Bicubic</option>
+                </select>
+              </div>
+              <div class="field"><label>Hires steps</label>
+                <div class="slider"><input type="range" id="hr_steps_r" min="0" max="150" step="1" value="0"><input type="number" id="hr_steps" min="0" max="150" step="1" value="0"></div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Denoising strength</label>
+                <div class="slider"><input type="range" id="denoising_r" min="0" max="1" step="0.01" value="0.5"><input type="number" id="denoising" min="0" max="1" step="0.01" value="0.5"></div>
+              </div>
+              <div class="field"><label>Upscale by</label>
+                <div class="slider"><input type="range" id="hr_scale_r" min="1" max="4" step="0.05" value="2"><input type="number" id="hr_scale" min="1" max="4" step="0.05" value="2"></div>
+              </div>
+            </div>
+            <div class="mono" id="hr_finalres" style="font-size:12px;color:var(--text-dim)">Upscaled resolution: 2048x2048</div>
+          </div>
+        </div>
+        <div class="accordion" style="flex:1 1 0">
+          <div class="acc-head"><span class="chev">&#9656;</span>
+            <span class="check" onclick="event.stopPropagation()"><input type="checkbox" disabled></span>
+            <span>Refiner</span>
+          </div>
+          <div class="acc-body"><div style="color:var(--text-dim);font-size:12.5px">
+            Not applicable — Anima has no separate refiner model.</div></div>
+        </div>
+      </div>
+
+      <!-- Sampling method -->
+      <div class="accordion open" id="acc_sampler">
+        <div class="acc-head"><span class="chev">&#9656;</span><span>Sampling method</span></div>
+        <div class="acc-body">
+          <div class="form-row">
+            <div class="field"><label>Sampling method</label>
+              <select class="sd-input" id="sampler_name"></select>
+            </div>
+            <div class="field"><label>Schedule type</label>
+              <select class="sd-input" id="scheduler_name"></select>
+            </div>
+          </div>
+          <div class="field"><label class="slider-label">Sampling steps</label>
+            <div class="slider"><input type="range" id="steps_r" min="1" max="150" step="1" value="30"><input type="number" id="steps" min="1" max="150" step="1" value="30"></div>
+          </div>
+          <div class="form-row">
+            <div class="check"><input type="checkbox" id="restore_faces"><label for="restore_faces">Restore faces</label></div>
+            <div class="check"><input type="checkbox" id="tiling"><label for="tiling">Tiling</label></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- dimensions -->
+      <div class="form-row">
+        <div class="field" style="flex:4 1 0">
+          <label class="slider-label">Width</label>
+          <div class="slider"><input type="range" id="width_r" min="64" max="2048" step="8" value="1024"><input type="number" id="width" min="64" max="2048" step="8" value="1024"></div>
+        </div>
+        <div class="field" style="flex:4 1 0">
+          <label class="slider-label">Height</label>
+          <div class="slider"><input type="range" id="height_r" min="64" max="2048" step="8" value="1024"><input type="number" id="height" min="64" max="2048" step="8" value="1024"></div>
+        </div>
+        <div class="dims-tools"><button class="tool" id="swap_dims" title="Switch width/height">&#8646;</button></div>
+      </div>
+
+      <!-- batch -->
+      <div class="form-row">
+        <div class="field"><label class="slider-label">Batch count</label>
+          <div class="slider"><input type="range" id="batch_count_r" min="1" max="100" step="1" value="1"><input type="number" id="batch_count" min="1" max="100" step="1" value="1"></div>
+        </div>
+        <div class="field"><label class="slider-label">Batch size</label>
+          <div class="slider"><input type="range" id="batch_size_r" min="1" max="8" step="1" value="1"><input type="number" id="batch_size" min="1" max="8" step="1" value="1"></div>
+        </div>
+      </div>
+
+      <!-- cfg -->
+      <div class="field"><label class="slider-label">CFG Scale</label>
+        <div class="slider"><input type="range" id="cfg_scale_r" min="1" max="30" step="0.5" value="4"><input type="number" id="cfg_scale" min="1" max="30" step="0.5" value="4"></div>
+      </div>
+
+      <!-- seed -->
+      <div class="accordion open" id="acc_seed">
+        <div class="acc-head"><span class="chev">&#9656;</span><span>Seed</span></div>
+        <div class="acc-body">
+          <div class="form-row">
+            <div class="field"><label class="slider-label">Seed</label>
+              <input class="sd-input" id="seed" type="number" value="-1">
+            </div>
+            <div class="dims-tools" style="gap:5px">
+              <button class="tool" id="seed_random" title="Randomize">&#127922;</button>
+              <button class="tool" id="seed_reuse" title="Reuse seed">&#8635;</button>
+            </div>
+            <div class="check" style="padding-bottom:7px"><input type="checkbox" id="subseed_extra"><label for="subseed_extra">Extra</label></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- script -->
+      <div class="accordion" id="acc_script">
+        <div class="acc-head"><span class="chev">&#9656;</span><span>Script</span></div>
+        <div class="acc-body">
+          <div class="field"><label>Script</label>
+            <select class="sd-input"><option>None</option><option>Prompt matrix</option><option>X/Y/Z plot</option></select>
+          </div>
+        </div>
+      </div>
+
+      <button class="generate" id="txt2img_generate2">Generate</button>
+    </div>
+
+    <!-- ==================== RIGHT: output ==================== -->
+    <div class="output-col">
+      <div class="progress-wrap" id="progress_wrap">
+        <div class="progress-text"><span id="progress_label">Generating…</span><span id="progress_eta"></span></div>
+        <div class="progress-bar"><div class="progress-fill indeterminate" id="progress_fill"></div></div>
+      </div>
+
+      <div class="gallery" id="gallery">
+        <div class="empty">
+          Your generated images will appear here.<br>
+          <span style="font-size:12.5px">Try <code>1girl, solo, anime style, detailed eyes</code></span>
+        </div>
+        <div class="gallery-nav" id="gallery_nav" style="display:none">
+          <button id="gprev">&#8249;</button><span id="gcount">1/1</span><button id="gnext">&#8250;</button>
+        </div>
+      </div>
+
+      <div class="out-buttons">
+        <button class="out-btn" id="btn_save">&#128190; Save</button>
+        <button class="out-btn" id="btn_zip">&#128230; Zip</button>
+        <button class="out-btn">Send to img2img</button>
+        <button class="out-btn">Send to inpaint</button>
+        <button class="out-btn">Send to extras</button>
+        <button class="out-btn">&#128465; Delete</button>
+      </div>
+
+      <div class="geninfo" id="generation_info"></div>
+    </div>
+  </div>
+  </div><!-- /#txt2img_generation_pane -->
+  </div><!-- /#tab_txt2img -->
+
+  <!-- ==================== img2img (A1111 img2img tab) ==================== -->
+  <div id="tab_img2img" class="main-tab-pane" style="display:none">
+  <div class="extras-slot" id="extras_slot_img2img"></div>
+  <div id="img2img_generation_pane">
+    <div class="main-row">
+      <div class="settings-col">
+        <div class="toprow">
+          <div class="prompt-container">
+            <textarea class="prompt" id="img2img_prompt" placeholder="Prompt&#10;(Press Ctrl+Enter to generate, Alt+Enter to skip, Esc to interrupt)"></textarea>
+            <textarea class="prompt" id="img2img_neg_prompt" placeholder="Negative prompt&#10;(Press Ctrl+Enter to generate, Alt+Enter to skip, Esc to interrupt)"></textarea>
+          </div>
+          <div class="actions-column">
+            <div class="generate-box">
+              <button class="generate" id="img2img_generate">Generate</button>
+              <div class="gen-overlay" id="img2img_gen_overlay">
+                <button class="interrupt" id="img2img_interrupt">Interrupt</button>
+                <button class="skip" id="img2img_skip">Skip</button>
+              </div>
+            </div>
+            <div class="style-row">
+              <select id="img2img_style1"><option>None</option></select>
+              <select id="img2img_style2"><option>None</option></select>
+              <button class="tool" id="img2img_style_apply" title="Apply all selected styles to prompts">&#10024;</button>
+            </div>
+            <div class="tools-row">
+              <button class="tool" id="img2img_btn_random" title="Randomize seed">&#127922;</button>
+              <button class="tool" id="img2img_btn_reuse" title="Reuse last seed">&#8635;</button>
+              <button class="tool" id="img2img_btn_clear" title="Clear prompt">&#128465;</button>
+              <button class="tool" id="img2img_btn_clear_img" title="Clear the input image">&#128683;</button>
+            </div>
+            <div class="token-counter" id="img2img_token_counter">0/75</div>
+          </div>
+        </div>
+
+        <!-- A1111 img2img mode tabs (gr.Tabs elem_id="mode_img2img") -->
+        <div class="tab-nav i2i-mode-tabs" id="mode_img2img">
+          <button class="selected" data-mode="img2img" id="img2img_img2img_tab">img2img</button>
+          <button data-mode="sketch" id="img2img_img2img_sketch_tab">Sketch</button>
+          <button data-mode="inpaint" id="img2img_inpaint_tab">Inpaint</button>
+          <button data-mode="inpaint_sketch" id="img2img_inpaint_sketch_tab">Inpaint sketch</button>
+          <button data-mode="inpaint_upload" id="img2img_inpaint_upload_tab">Inpaint upload</button>
+          <button data-mode="batch" id="img2img_batch_tab">Batch</button>
+        </div>
+
+        <div id="i2i_pane_img2img" class="i2i-pane">
+          <div class="i2i-drop" id="i2i_drop">
+            <img id="i2i_preview" alt="">
+            <div class="i2i-hint" id="i2i_hint">Drop an image here, click to choose a file, or paste with Ctrl+V</div>
+            <input type="file" id="i2i_file" accept="image/*" hidden>
+          </div>
+        </div>
+
+        <div id="i2i_pane_inpaint" class="i2i-pane" style="display:none">
+          <div class="i2i-drop i2i-paint" id="i2i_paint_wrap">
+            <div class="i2i-stage">
+              <img id="i2i_paint_img" alt="">
+              <canvas id="i2i_paint_canvas"></canvas>
+            </div>
+            <div class="i2i-hint" id="i2i_paint_hint">Paint the areas to regenerate &mdash; same image as the img2img tab</div>
+          </div>
+          <div class="i2i-brush-row">
+            <button class="tool selected" id="i2i_brush" title="Brush">&#128396;</button>
+            <button class="tool" id="i2i_eraser" title="Eraser">&#129691;</button>
+            <button class="tool" id="i2i_mask_clear" title="Clear mask">&#128465;</button>
+            <label class="slider-label" style="margin-left:8px">Brush size</label>
+            <div class="slider" style="flex:1 1 200px">
+              <input type="range" id="i2i_brush_size_r" min="1" max="200" step="1" value="40">
+              <input type="number" id="i2i_brush_size" min="1" max="200" step="1" value="40">
+            </div>
+          </div>
+        </div>
+
+        <div id="i2i_pane_inpaint_upload" class="i2i-pane" style="display:none">
+          <div class="i2i-two">
+            <div class="i2i-drop" id="i2i_upload_base_drop">
+              <img id="i2i_upload_base_img" alt="">
+              <div class="i2i-hint">Image</div>
+              <input type="file" id="i2i_file_base" accept="image/*" hidden>
+            </div>
+            <div class="i2i-drop" id="i2i_upload_mask_drop">
+              <img id="i2i_upload_mask_img" alt="">
+              <div class="i2i-hint">Mask (white = inpaint area)</div>
+              <input type="file" id="i2i_file_mask" accept="image/*" hidden>
+            </div>
+          </div>
+        </div>
+
+        <div id="i2i_pane_notimpl" class="i2i-pane" style="display:none">
+          <div class="nocards">
+            <h1 id="i2i_notimpl_title">Not implemented</h1>
+            <div>This build wires up <b>img2img</b>, <b>Inpaint</b> and <b>Inpaint upload</b>.
+              The other img2img sub-tabs keep A1111's names but are not connected to the backend.</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Resize mode</label>
+          <div class="radio-row" id="resize_mode">
+            <label><input type="radio" name="resize_mode" value="0" checked> Just resize</label>
+            <label><input type="radio" name="resize_mode" value="1"> Crop and resize</label>
+            <label><input type="radio" name="resize_mode" value="2"> Resize and fill</label>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim)">
+            A1111's fourth mode, "Just resize (latent upscale)", is not implemented here.
+          </div>
+        </div>
+
+        <div class="accordion open" id="acc_i2i_resize">
+          <div class="acc-head"><span class="chev">&#9656;</span><span>Resize</span></div>
+          <div class="acc-body">
+            <div class="tab-nav sub-tabs" id="img2img_tabs_resize">
+              <button class="selected" data-rtab="to" id="img2img_tab_resize_to">Resize to</button>
+              <button data-rtab="by" id="img2img_tab_resize_by">Resize by</button>
+            </div>
+            <div id="i2i_resize_to">
+              <div class="form-row">
+                <div class="field"><label class="slider-label">Width</label>
+                  <div class="slider"><input type="range" id="img2img_width_r" min="64" max="2048" step="8" value="512"><input type="number" id="img2img_width" min="64" max="2048" step="8" value="512"></div>
+                </div>
+                <div class="field"><label class="slider-label">Height</label>
+                  <div class="slider"><input type="range" id="img2img_height_r" min="64" max="2048" step="8" value="512"><input type="number" id="img2img_height" min="64" max="2048" step="8" value="512"></div>
+                </div>
+                <div class="dims-tools" style="gap:5px">
+                  <button class="tool" id="img2img_res_switch" title="Switch width/height">&#8646;</button>
+                  <button class="tool" id="img2img_detect_size" title="Auto detect size from the input image">&#128444;</button>
+                </div>
+              </div>
+            </div>
+            <div id="i2i_resize_by" style="display:none">
+              <div class="field"><label class="slider-label">Scale</label>
+                <div class="slider"><input type="range" id="img2img_scale_r" min="0.05" max="4" step="0.05" value="1"><input type="number" id="img2img_scale" min="0.05" max="4" step="0.05" value="1"></div>
+              </div>
+              <div class="mono" id="img2img_scale_preview" style="font-size:12px;color:var(--text-dim)">Uses the "Resize to" width/height until an image is loaded.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field"><label class="slider-label">Denoising strength</label>
+          <div class="slider"><input type="range" id="img2img_denoising_strength_r" min="0" max="1" step="0.01" value="0.75"><input type="number" id="img2img_denoising_strength" min="0" max="1" step="0.01" value="0.75"></div>
+        </div>
+
+        <div class="accordion open" id="acc_i2i_sampler">
+          <div class="acc-head"><span class="chev">&#9656;</span><span>Sampling method</span></div>
+          <div class="acc-body">
+            <div class="form-row">
+              <div class="field"><label>Sampling method</label><select class="sd-input" id="img2img_sampler_name"></select></div>
+              <div class="field"><label>Schedule type</label><select class="sd-input" id="img2img_scheduler_name"></select></div>
+            </div>
+            <div class="field"><label class="slider-label">Sampling steps</label>
+              <div class="slider"><input type="range" id="img2img_steps_r" min="1" max="150" step="1" value="30"><input type="number" id="img2img_steps" min="1" max="150" step="1" value="30"></div>
+            </div>
+            <div class="form-row">
+              <div class="check"><input type="checkbox" id="img2img_restore_faces"><label for="img2img_restore_faces">Restore faces</label></div>
+              <div class="check"><input type="checkbox" id="img2img_tiling"><label for="img2img_tiling">Tiling</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field"><label class="slider-label">Batch count</label>
+            <div class="slider"><input type="range" id="img2img_batch_count_r" min="1" max="100" step="1" value="1"><input type="number" id="img2img_batch_count" min="1" max="100" step="1" value="1"></div>
+          </div>
+          <div class="field"><label class="slider-label">Batch size</label>
+            <div class="slider"><input type="range" id="img2img_batch_size_r" min="1" max="8" step="1" value="1"><input type="number" id="img2img_batch_size" min="1" max="8" step="1" value="1"></div>
+          </div>
+        </div>
+
+        <div class="field"><label class="slider-label">CFG Scale</label>
+          <div class="slider"><input type="range" id="img2img_cfg_scale_r" min="1" max="30" step="0.5" value="4"><input type="number" id="img2img_cfg_scale" min="1" max="30" step="0.5" value="4"></div>
+        </div>
+
+        <div class="accordion open" id="acc_i2i_seed">
+          <div class="acc-head"><span class="chev">&#9656;</span><span>Seed</span></div>
+          <div class="acc-body">
+            <div class="form-row">
+              <div class="field"><label class="slider-label">Seed</label><input class="sd-input" id="img2img_seed" type="number" value="-1"></div>
+              <div class="dims-tools" style="gap:5px">
+                <button class="tool" id="img2img_seed_random" title="Randomize">&#127922;</button>
+                <button class="tool" id="img2img_seed_reuse" title="Reuse seed">&#8635;</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion" id="acc_i2i_inpaint">
+          <div class="acc-head"><span class="chev">&#9656;</span><span>Inpaint</span></div>
+          <div class="acc-body">
+            <div class="field"><label class="slider-label">Mask blur</label>
+              <div class="slider"><input type="range" id="img2img_mask_blur_r" min="0" max="64" step="1" value="4"><input type="number" id="img2img_mask_blur" min="0" max="64" step="1" value="4"></div>
+            </div>
+            <div class="field"><label>Mask mode</label>
+              <div class="radio-row" id="img2img_mask_mode">
+                <label><input type="radio" name="mask_mode" value="0" checked> Inpaint masked</label>
+                <label><input type="radio" name="mask_mode" value="1"> Inpaint not masked</label>
+              </div>
+            </div>
+            <div class="field"><label>Masked content</label>
+              <div class="radio-row" id="img2img_inpainting_fill">
+                <label><input type="radio" name="inpaint_fill" value="0"> fill</label>
+                <label><input type="radio" name="inpaint_fill" value="1" checked> original</label>
+                <label><input type="radio" name="inpaint_fill" value="2"> latent noise</label>
+                <label><input type="radio" name="inpaint_fill" value="3"> latent nothing</label>
+              </div>
+            </div>
+            <div class="field"><label>Inpaint area</label>
+              <div class="radio-row" id="img2img_inpaint_full_res">
+                <label><input type="radio" name="inpaint_area" value="0" checked> Whole picture</label>
+                <label><input type="radio" name="inpaint_area" value="1"> Only masked</label>
+              </div>
+            </div>
+            <div class="field"><label class="slider-label">Only masked padding, pixels</label>
+              <div class="slider"><input type="range" id="img2img_pad_r" min="0" max="256" step="4" value="32"><input type="number" id="img2img_pad" min="0" max="256" step="4" value="32"></div>
+            </div>
+            <div style="font-size:12px;color:var(--text-dim)">
+              ComfyUI regenerates the masked region through a latent noise mask, so
+              <b>Masked content</b> has no direct equivalent and <b>Only masked</b> is not
+              cropped/stitched &mdash; it behaves like Whole picture.
+            </div>
+          </div>
+        </div>
+
+        <button class="generate" id="img2img_generate2">Generate</button>
+      </div>
+
+      <div class="output-col">
+        <div class="progress-wrap" id="img2img_progress_wrap">
+          <div class="progress-text"><span id="img2img_progress_label">Generating&hellip;</span><span id="img2img_progress_eta"></span></div>
+          <div class="progress-bar"><div class="progress-fill indeterminate" id="img2img_progress_fill"></div></div>
+        </div>
+        <div class="gallery" id="img2img_gallery">
+          <div class="empty">Your generated images will appear here.<br>
+            <span style="font-size:12.5px">Load an image on the left, then press Generate</span></div>
+          <div class="gallery-nav" id="img2img_gallery_nav" style="display:none">
+            <button id="img2img_gprev">&#8249;</button><span id="img2img_gcount">1/1</span><button id="img2img_gnext">&#8250;</button>
+          </div>
+        </div>
+        <div class="out-buttons">
+          <button class="out-btn" id="img2img_btn_save">&#128190; Save</button>
+          <button class="out-btn" id="img2img_send_inpaint">Send to inpaint</button>
+        </div>
+        <div class="geninfo" id="img2img_generation_info"></div>
+      </div>
+    </div>
+  </div>
+  </div><!-- /#tab_img2img -->
+
+  <!-- The extra-networks row + panes are one shared DOM block that JS moves into the active
+       top-level tab's slot (A1111 builds a separate copy per tab; the ids stay txt2img_*). -->
+  <div id="extras_movable">
+    <div class="extra-tabs-row" id="extra_networks_row">
+      <div class="tab-nav extra-tabs" id="txt2img_extra_tabs">
+        <button class="selected" id="txt2img_generation" data-pane="generation">Generation</button>
+        <button id="txt2img_textual_inversion" data-pane="textual_inversion">Textual Inversion</button>
+        <button id="txt2img_hypernetworks" data-pane="hypernetworks">Hypernetworks</button>
+        <button id="txt2img_checkpoints" data-pane="checkpoints">Checkpoints</button>
+        <button id="txt2img_lora" data-pane="lora">Lora</button>
+      </div>
+      <button class="en-collapse" id="en_collapse" title="Show/hide extra networks">&#9662;</button>
+    </div>
+    <div id="extra_panes"></div>
+  </div>
+
+  <footer>
+    <div>
+      Anima WebUI · A1111-style front end · A1111-compatible API:
+      <a href="/docs" class="mono">/docs</a> ·
+      <a href="/sdapi/v1/sd-models" class="mono">/sdapi/v1/sd-models</a>
+    </div>
+    <div class="mono">Anima Base v1.0 · ComfyUI · <span id="ping">checking…</span></div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* A1111 sampler names -> ComfyUI (sampler, scheduler-family) */
+  var SAMPLERS = ["Euler a","Euler","LMS","Heun","DPM2","DPM2 a","DPM++ 2S a","DPM++ 2M","DPM++ SDE",
+                  "DPM++ 2M SDE","DPM++ 3M SDE","Restart","DDIM","UniPC","LCM"];
+  var SCHEDULERS = ["Automatic","Karras","Exponential","SGM Uniform","Normal","Simple","DDIM Unified",
+                    "Beta","Linear Quadratic","KL Optimal","Align Your Steps"];
+  var STYLES = ["None","Anime","Anime detailed","Photographic","Cinematic"];
+
+  function $(id){ return document.getElementById(id); }
+  function val(id){ return $(id).value; }
+  function num(id){ return parseFloat($(id).value); }
+
+  /* ---------- populate dropdowns ---------- */
+  SAMPLERS.forEach(function(s){ $("sampler_name").insertAdjacentHTML("beforeend","<option>"+s+"</option>"); });
+  SCHEDULERS.forEach(function(s){ $("scheduler_name").insertAdjacentHTML("beforeend","<option>"+s+"</option>"); });
+  ["style1","style2"].forEach(function(id){
+    STYLES.forEach(function(s){
+      if(s!=="None") $(id).insertAdjacentHTML("beforeend","<option>"+s+"</option>");
+    });
+  });
+  /* Anima's official template defaults: euler + simple */
+  $("sampler_name").value = "Euler";
+  $("scheduler_name").value = "Simple";
+
+  /* ---------- generic slider <-> number sync ---------- */
+  [["steps_r","steps"],["width_r","width"],["height_r","height"],["batch_count_r","batch_count"],
+   ["batch_size_r","batch_size"],["cfg_scale_r","cfg_scale"],["hr_steps_r","hr_steps"],
+   ["denoising_r","denoising"],["hr_scale_r","hr_scale"]].forEach(function(pair){
+    var r=$(pair[0]), n=$(pair[1]);
+    r.addEventListener("input", function(){ n.value = r.value; if(pair[0]==="width_r"||pair[0]==="height_r") updateHiresRes(); });
+    n.addEventListener("input", function(){ r.value = n.value; if(pair[0]==="width_r"||pair[1]==="height") updateHiresRes(); });
+  });
+
+  function updateHiresRes(){
+    var w=num("width"), h=num("height"), s=num("hr_scale");
+    var tx = $("enable_hr").checked ? Math.round(w*s) : w;
+    var ty = $("enable_hr").checked ? Math.round(h*s) : h;
+    $("hr_finalres").textContent = "Upscaled resolution: " + tx + "x" + ty;
+  }
+  $("enable_hr").addEventListener("change", updateHiresRes);
+  $("hr_scale").addEventListener("input", updateHiresRes);
+
+  /* ---------- accordions ---------- */
+  document.querySelectorAll(".accordion > .acc-head").forEach(function(h){
+    h.addEventListener("click", function(){ h.parentElement.classList.toggle("open"); });
+  });
+
+  /* ---------- small tools ---------- */
+  function rndSeed(){ return Math.floor(Math.random()*4294967295); }
+  function setSeed(v){ $("seed").value = v; }
+  function applySeedButtons(){
+    $("btn_random").onclick = $("seed_random").onclick = function(){ setSeed(rndSeed()); };
+    $("btn_reuse").onclick  = $("seed_reuse").onclick  = function(){ if(lastSeed!==null) setSeed(lastSeed); };
+    $("btn_clear").onclick = function(){ $("txt2img_prompt").value=""; $("txt2img_neg_prompt").value=""; countTokens(); };
+    $("btn_paste").onclick = function(){ if(lastInfo) $("generation_info").textContent = lastInfo; };
+    $("swap_dims").onclick = function(){
+      var w=$("width").value; $("width").value=$("height").value; $("height").value=w;
+      $("width_r").value=$("width").value; $("height_r").value=$("height").value; updateHiresRes();
+    };
+    $("style_apply").onclick = function(){
+      var add=[$("style1").value,$("style2").value].filter(function(s){return s!=="None";});
+      if(!add.length) return;
+      var pre = { "Anime":"anime style, ",
+                  "Anime detailed":"anime style, highly detailed, ",
+                  "Photographic":"photorealistic, ",
+                  "Cinematic":"cinematic lighting, " }[add[0]] || "";
+      var p=$("txt2img_prompt");
+      if(pre && p.value.indexOf(pre.trim())===-1) p.value = pre + p.value;
+      countTokens();
+    };
+  }
+  $("txt2img_prompt").addEventListener("input", function(){ countTokens("txt2img"); });
+
+  /* ---------- gallery navigation ---------- */
+  var images = [], idx = 0, lastSeed = null, lastInfo = "";
+  function showImage(){
+    var g=$("gallery");
+    if(!images.length){ return; }
+    g.querySelectorAll("img").forEach(function(e){ e.remove(); });
+    var im=document.createElement("img");
+    im.src = images[idx];
+    g.querySelector(".empty").style.display="none";
+    g.appendChild(im);
+    $("gallery_nav").style.display = images.length>1 ? "flex" : "none";
+    $("gcount").textContent = (idx+1)+"/"+images.length;
+  }
+  $("gprev").onclick=function(){ if(images.length){ idx=(idx-1+images.length)%images.length; showImage(); } };
+  $("gnext").onclick=function(){ if(images.length){ idx=(idx+1)%images.length; showImage(); } };
+
+  /* ---------- progress ---------- */
+  var progressTimer=null, startedAt=0;
+  function startProgress(){
+    startedAt=Date.now();
+    $("progress_wrap").classList.add("active");
+    $("progress_fill").classList.add("indeterminate");
+    $("progress_fill").style.width="35%";
+    $("progress_label").textContent="Generating…";
+    $("progress_eta").textContent="";
+    progressTimer=setInterval(pollProgress, 900);
+  }
+  function stopProgress(){
+    if(progressTimer) clearInterval(progressTimer);
+    progressTimer=null;
+    $("progress_wrap").classList.remove("active");
+  }
+  function pollProgress(){
+    fetch("/sdapi/v1/progress").then(function(r){return r.json();}).then(function(p){
+      if(p && typeof p.progress==="number" && p.progress>0){
+        var pct=Math.round(p.progress*100);
+        $("progress_fill").classList.remove("indeterminate");
+        $("progress_fill").style.width=pct+"%";
+        $("progress_label").textContent="Sampling "+(p.state?p.state.step||"":"")+" — "+pct+"%";
+        if(p.eta_relative>0) $("progress_eta").textContent="ETA "+p.eta_relative.toFixed(1)+"s";
+      } else {
+        $("progress_fill").classList.add("indeterminate");
+      }
+    }).catch(function(){});
+  }
+
+  /* ---------- generate ---------- */
+  var busy=false;
+  function payload(){
+    return {
+      prompt: $("txt2img_prompt").value,
+      negative_prompt: $("txt2img_neg_prompt").value,
+      steps: Math.round(num("steps")),
+      cfg_scale: num("cfg_scale"),
+      width: Math.round(num("width")),
+      height: Math.round(num("height")),
+      sampler_name: val("sampler_name"),
+      scheduler: val("scheduler_name"),
+      seed: Math.round(num("seed")),
+      batch_size: Math.round(num("batch_size")),
+      n_iter: Math.round(num("batch_count")),
+      restore_faces: $("restore_faces").checked,
+      tiling: $("tiling").checked,
+      enable_hr: $("enable_hr").checked,
+      hr_scale: num("hr_scale"),
+      hr_upscaler: val("hr_upscaler"),
+      hr_second_pass_steps: Math.round(num("hr_steps")),
+      denoising_strength: num("denoising"),
+      override_settings: { sd_model_checkpoint: val("sd_model_checkpoint") }
+    };
+  }
+
+  function generate(){
+    if(busy) return;
+    busy=true;
+    $("txt2img_generate").disabled=true;
+    $("txt2img_generate2").disabled=true;
+    $("gen_overlay").classList.add("active");
+    startProgress();
+    var t0=Date.now();
+
+    fetch("/sdapi/v1/txt2img",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(payload())
+    }).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error(t||("HTTP "+r.status)); });
+      return r.json();
+    }).then(function(d){
+      images = (d.images||[]).map(function(b){ return "data:image/png;base64,"+b; });
+      idx=0; showImage();
+      lastInfo = d.info || "";
+      $("generation_info").textContent = lastInfo;
+      try{ var inf=JSON.parse(lastInfo); if(inf.seed!==undefined) lastSeed=inf.seed; }catch(e){ lastSeed=payload().seed; }
+      $("progress_label").textContent="Done in "+((Date.now()-t0)/1000).toFixed(1)+"s";
+    }).catch(function(e){
+      $("progress_label").textContent="Error: "+e.message;
+      $("progress_wrap").classList.add("active");
+      $("progress_fill").classList.remove("indeterminate");
+      $("progress_fill").style.width="100%";
+      $("progress_fill").style.background="#dc2626";
+      setTimeout(function(){ $("progress_fill").style.background=""; },2000);
+      return null;
+    }).then(function(){
+      busy=false;
+      $("txt2img_generate").disabled=false;
+      $("txt2img_generate2").disabled=false;
+      $("gen_overlay").classList.remove("active");
+      setTimeout(stopProgress, 1200);
+    });
+  }
+
+  $("txt2img_generate").onclick = generate;
+  $("txt2img_generate2").onclick = generate;
+
+  function interrupt(){
+    fetch("/sdapi/v1/interrupt",{method:"POST"}).catch(function(){});
+    $("progress_label").textContent="Interrupting…";
+  }
+  $("txt2img_interrupt").onclick = interrupt;
+  $("txt2img_skip").onclick = interrupt;
+
+  document.addEventListener("keydown", function(e){
+    if(e.ctrlKey && e.key==="Enter"){ e.preventDefault(); generate(); }
+    else if(e.key==="Escape"){ interrupt(); }
+  });
+
+  /* ================== extra networks (A1111's Lora / Checkpoints tabs) ==================
+     Mirrors A1111: one "page" per network type, a control bar (search / Sort: / 4 sort keys /
+     direction / folder list toggle / refresh), a folder-list column whose buttons drive the
+     search box, and cards that insert <lora:name:weight> into the prompt on click.          */
+  var EN_KINDS = ["textual_inversion", "hypernetworks", "checkpoints", "lora"];
+  var EN_EMPTY_DIRS = {
+    textual_inversion: ["/content/ComfyUI/models/embeddings"],
+    hypernetworks: ["/content/ComfyUI/models/hypernetworks"],
+    checkpoints: ["/content/ComfyUI/models/diffusion_models"],
+    lora: ["/content/ComfyUI/models/loras"]
+  };
+  var EN = {};
+  EN_KINDS.forEach(function(k){
+    EN[k] = { loaded:false, items:[], dirs:[], mult:1.0,
+              search:"", sortKey:"default", sortDir:"Ascending" };
+  });
+
+  function mk(tag, cls, txt){
+    var e = document.createElement(tag);
+    if(cls) e.className = cls;
+    if(txt !== undefined && txt !== null) e.textContent = txt;
+    return e;
+  }
+
+  function buildPane(kind){
+    var pane = mk("div", "extra-network-pane");
+    pane.id = "txt2img_" + kind + "_pane";
+    pane.style.display = "none";
+
+    var control = mk("div", "extra-network-control");
+    control.id = "txt2img_" + kind + "_controls";
+
+    var sw = mk("div", "extra-network-control--search");
+    var search = document.createElement("input");
+    search.type = "search"; search.placeholder = "Search";
+    search.className = "extra-network-control--search-text";
+    search.id = "txt2img_" + kind + "_extra_search";
+    search.addEventListener("input", function(){ EN[kind].search = search.value; renderCards(kind); });
+    sw.appendChild(search); control.appendChild(sw);
+
+    control.appendChild(mk("small", null, "Sort: "));
+    [["default","Sort by path"],["name","Sort by name"],
+     ["date_created","Sort by date created"],["date_modified","Sort by date modified"]]
+    .forEach(function(s){
+      var d = mk("div", "extra-network-control--sort");
+      d.dataset.sortkey = s[0]; d.title = s[1];
+      d.appendChild(mk("i", "extra-network-control--icon extra-network-control--sort-icon"));
+      d.addEventListener("click", function(){
+        EN[kind].sortKey = s[0];
+        control.querySelectorAll(".extra-network-control--sort").forEach(function(x){
+          x.classList.remove("extra-network-control--enabled");
+        });
+        d.classList.add("extra-network-control--enabled");
+        renderCards(kind);
+      });
+      control.appendChild(d);
+    });
+    control.appendChild(mk("small", null, " "));
+
+    var dirBtn = mk("div", "extra-network-control--sort-dir");
+    dirBtn.dataset.sortdir = "Ascending"; dirBtn.title = "Sort ascending";
+    dirBtn.appendChild(mk("i", "extra-network-control--icon extra-network-control--sort-dir-icon"));
+    dirBtn.addEventListener("click", function(){
+      var asc = EN[kind].sortDir === "Ascending";
+      EN[kind].sortDir = asc ? "Descending" : "Ascending";
+      dirBtn.dataset.sortdir = EN[kind].sortDir;
+      dirBtn.title = asc ? "Sort descending" : "Sort ascending";
+      renderCards(kind);
+    });
+    control.appendChild(dirBtn);
+    control.appendChild(mk("small", null, " "));
+
+    var treeBtn = mk("div", "extra-network-control--tree-view");
+    treeBtn.title = "Show/hide folder list";
+    treeBtn.appendChild(mk("i", "extra-network-control--icon extra-network-control--tree-view-icon"));
+    treeBtn.addEventListener("click", function(){ pane.classList.toggle("extra-network-dirs-hidden"); });
+    control.appendChild(treeBtn);
+
+    var ref = mk("div", "extra-network-control--refresh");
+    ref.title = "Refresh page";
+    ref.appendChild(mk("i", "extra-network-control--icon extra-network-control--refresh-icon"));
+    ref.addEventListener("click", function(){ loadExtra(kind, true); });
+    control.appendChild(ref);
+
+    var content = mk("div", "extra-network-pane-content-dirs");
+    var dirs = mk("div", "extra-network-dirs"); dirs.id = "txt2img_" + kind + "_dirs";
+    var cards = mk("div", "extra-network-cards"); cards.id = "txt2img_" + kind + "_cards";
+    content.appendChild(dirs); content.appendChild(cards);
+
+    pane.appendChild(control);
+    pane.appendChild(content);
+    // A1111's default extra-networks sort field is "Path"
+    pane.querySelector('.extra-network-control--sort[data-sortkey="default"]')
+        .classList.add("extra-network-control--enabled");
+    return pane;
+  }
+
+  function renderDirs(kind){
+    var wrap = document.getElementById("txt2img_" + kind + "_dirs");
+    if(!wrap) return;
+    wrap.innerHTML = "";
+    (EN[kind].dirs || []).forEach(function(d){
+      var b = mk("button", null, d === "" ? "all" : d);
+      if(d === "") b.classList.add("search-all");
+      b.addEventListener("click", function(){
+        var s = document.getElementById("txt2img_" + kind + "_extra_search");
+        if(s) s.value = d;
+        EN[kind].search = d;
+        renderCards(kind);
+      });
+      wrap.appendChild(b);
+    });
+  }
+
+  function renderCards(kind){
+    var box = document.getElementById("txt2img_" + kind + "_cards");
+    if(!box) return;
+    var st = EN[kind];
+    box.innerHTML = "";
+    var items = st.items.slice();
+    var q = (st.search || "").toLowerCase().trim();
+    if(q){
+      items = items.filter(function(it){
+        return (it.name + " " + it.alias + " " + (it.rel || "") + " " + (it.filename || ""))
+                 .toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    var key = st.sortKey;
+    function sortVal(it){
+      if(key === "name") return it.alias.toLowerCase();
+      if(key === "date_created") return it.ctime || 0;
+      if(key === "date_modified") return it.mtime || 0;
+      return (it.rel || it.name).toLowerCase();
+    }
+    items.sort(function(a, b){ var x = sortVal(a), y = sortVal(b); return x < y ? -1 : (x > y ? 1 : 0); });
+    if(st.sortDir === "Descending") items.reverse();
+
+    if(!items.length && !st.items.length){
+      var nc = mk("div", "nocards");
+      nc.appendChild(mk("h1", null, "Nothing here. Add some content to the following directories:"));
+      var ul = document.createElement("ul");
+      (EN_EMPTY_DIRS[kind] || []).forEach(function(d){ ul.appendChild(mk("li", null, d)); });
+      nc.appendChild(ul);
+      box.appendChild(nc);
+      return;
+    }
+    if(!items.length){
+      var nn = mk("div", "nocards");
+      nn.appendChild(mk("h1", null, "No items match the search."));
+      box.appendChild(nn);
+      return;
+    }
+
+    var active = (document.getElementById("sd_model_checkpoint") || {}).value;
+    items.forEach(function(it){
+      var card = mk("div", "card");
+      card.dataset.name = it.name;
+      card.dataset.path = it.rel || it.name;
+      card.dataset.mtime = it.mtime || 0;
+      card.dataset.ctime = it.ctime || 0;
+      card.title = it.name + (it.size ? "   (" + (it.size / 1048576).toFixed(1) + " MB)" : "");
+      if(kind === "checkpoints" && it.alias === active) card.classList.add("is-active");
+
+      if(it.preview){
+        var img = document.createElement("img");
+        img.className = "preview"; img.loading = "lazy"; img.src = it.preview;
+        img.addEventListener("error", function(){ img.remove(); });
+        card.appendChild(img);
+      }
+
+      var brow = mk("div", "button-row");
+      [["copy-path-button","Copy path"],["metadata-button","Metadata"],["edit-button","Edit"]]
+      .forEach(function(b){
+        var btn = mk("button", "card-button " + b[0]);
+        btn.title = b[1];
+        btn.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          if(b[0] === "copy-path-button" && navigator.clipboard) navigator.clipboard.writeText(it.filename);
+          if(b[0] === "metadata-button") showMetadata(kind, it);
+        });
+        brow.appendChild(btn);
+      });
+      card.appendChild(brow);
+
+      var actions = mk("div", "actions");
+      actions.appendChild(mk("div", "additional", it.filename));
+      actions.appendChild(mk("span", "name", it.alias));
+      card.appendChild(actions);
+
+      card.addEventListener("click", function(){ cardClicked(kind, it); });
+      box.appendChild(card);
+    });
+  }
+
+  function showMetadata(kind, it){
+    var info = document.getElementById("generation_info");
+    if(!info) return;
+    info.textContent =
+      "Extra network: " + it.name + "\n" +
+      "File: " + it.filename + "\n" +
+      "Size: " + (it.size / 1048576).toFixed(1) + " MB\n" +
+      "Created: " + new Date((it.ctime || 0) * 1000).toLocaleString() + "\n" +
+      "Modified: " + new Date((it.mtime || 0) * 1000).toLocaleString() + "\n" +
+      "Preview: " + (it.preview ? "yes" : "none (placeholder shown)");
+  }
+
+  function cardClicked(kind, it){
+    if(kind === "lora"){
+      // A1111 inserts "<lora:name:" + default multiplier + ">" into the active tab's prompt
+      var ta = document.getElementById(HOST_PROMPT[ACTIVE_HOST]);
+      if(!ta) return;
+      var v = ta.value;
+      if(v && !/\s$/.test(v)) v += " ";
+      ta.value = v + "<lora:" + it.alias + ":" + EN.lora.mult + ">";
+      ta.focus();
+      countTokens();
+    } else if(kind === "checkpoints"){
+      var sel = document.getElementById("sd_model_checkpoint");
+      for(var i = 0; i < sel.options.length; i++){
+        if(sel.options[i].value === it.name){ sel.selectedIndex = i; break; }
+      }
+      var box = document.getElementById("txt2img_checkpoints_cards");
+      box.querySelectorAll(".card").forEach(function(c){
+        c.classList.toggle("is-active", c.dataset.name === it.name);
+      });
+    } else if(kind === "textual_inversion" || kind === "hypernetworks"){
+      var ta2 = document.getElementById(HOST_PROMPT[ACTIVE_HOST]);
+      if(ta2){
+        if(ta2.value && !/\s$/.test(ta2.value)) ta2.value += " ";
+        ta2.value += it.alias;
+      }
+      countTokens();
+    }
+  }
+
+  function switchPane(name){
+    document.querySelectorAll("#txt2img_extra_tabs button").forEach(function(b){
+      b.classList.toggle("selected", b.dataset.pane === name);
+    });
+    var gen = document.getElementById(HOST_GEN[ACTIVE_HOST]);
+    if(gen) gen.style.display = (name === "generation") ? "" : "none";
+    EN_KINDS.forEach(function(k){
+      var p = document.getElementById("txt2img_" + k + "_pane");
+      if(p) p.style.display = (k === name) ? "" : "none";
+    });
+    if(name !== "generation" && !EN[name].loaded) loadExtra(name, false);
+  }
+
+  function loadExtra(kind, force){
+    if(kind === "generation") return;
+    var box = document.getElementById("txt2img_" + kind + "_cards");
+    if(force && box) box.innerHTML = '<div class="nocards"><h1>Loading\u2026</h1></div>';
+    fetch("/internal/extra-networks?kind=" + encodeURIComponent(kind))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        EN[kind].items = d.items || [];
+        EN[kind].dirs = d.dirs || [];
+        EN[kind].mult = d.default_multiplier || 1.0;
+        EN[kind].loaded = true;
+        renderDirs(kind); renderCards(kind);
+      })
+      .catch(function(e){
+        if(!box) return;
+        box.innerHTML = "";
+        var nc = mk("div", "nocards");
+        nc.appendChild(mk("h1", null, "Failed to load: " + e.message));
+        box.appendChild(nc);
+      });
+  }
+
+  (function initExtraNetworks(){
+    var holder = document.getElementById("extra_panes");
+    EN_KINDS.forEach(function(k){ holder.appendChild(buildPane(k)); });
+    document.querySelectorAll("#txt2img_extra_tabs button").forEach(function(b){
+      b.addEventListener("click", function(){ switchPane(b.dataset.pane); });
+    });
+    var row = document.getElementById("extra_networks_row");
+    document.getElementById("en_collapse").addEventListener("click", function(){
+      row.classList.toggle("extra-tabs-collapsed");
+      if(row.classList.contains("extra-tabs-collapsed")) switchPane("generation");
+    });
+  })();
+
+  /* ==================== host tabs (txt2img / img2img) ====================
+     The extras row + network panes are a single DOM block; A1111 builds one per top-level
+     tab, here it is moved into whichever tab is active. */
+  var ACTIVE_HOST = "txt2img";
+  var HOST_PROMPT = { txt2img: "txt2img_prompt", img2img: "img2img_prompt" };
+  var HOST_GEN = { txt2img: "txt2img_generation_pane", img2img: "img2img_generation_pane" };
+  var HOST_COUNTER = { txt2img: "token_counter", img2img: "img2img_token_counter" };
+
+  function countTokens(host){
+    host = (host === "txt2img" || host === "img2img") ? host : ACTIVE_HOST;
+    var ta = document.getElementById(HOST_PROMPT[host]);
+    var tc = document.getElementById(HOST_COUNTER[host]);
+    if(tc) tc.textContent = Math.ceil(((ta && ta.value) || "").length / 4) + "/75";
+  }
+
+  function switchHost(host){
+    ACTIVE_HOST = host;
+    document.querySelectorAll("#main_tabs button[data-tab]").forEach(function(b){
+      b.classList.toggle("selected", b.dataset.tab === host);
+    });
+    var t1 = document.getElementById("tab_txt2img");
+    var t2 = document.getElementById("tab_img2img");
+    if(t1) t1.style.display = (host === "txt2img") ? "" : "none";
+    if(t2) t2.style.display = (host === "img2img") ? "" : "none";
+
+    var movable = document.getElementById("extras_movable");
+    var slot = document.getElementById("extras_slot_" + host);
+    if(movable && slot && movable.parentElement !== slot) slot.appendChild(movable);
+
+    switchPane("generation");
+    if(host === "img2img") setTimeout(function(){ syncPaintStage(); }, 0);
+  }
+
+  /* ==================== img2img ==================== */
+  var I2I = { baseSrc:null, baseW:0, baseH:0, maskSrc:null, mode:"img2img", resizeTab:"to",
+              brush:"brush", painting:false, images:[], idx:0, busy:false };
+
+  function radioVal(name){
+    var e = document.querySelector('input[name="' + name + '"]:checked');
+    return e ? e.value : null;
+  }
+
+  function i2iSetMode(mode){
+    I2I.mode = mode;
+    document.querySelectorAll("#mode_img2img button").forEach(function(b){
+      b.classList.toggle("selected", b.dataset.mode === mode);
+    });
+    function show(id, on){ var e = document.getElementById(id); if(e) e.style.display = on ? "" : "none"; }
+    show("i2i_pane_img2img", mode === "img2img");
+    show("i2i_pane_inpaint", mode === "inpaint");
+    show("i2i_pane_inpaint_upload", mode === "inpaint_upload");
+    show("i2i_pane_notimpl", mode === "sketch" || mode === "inpaint_sketch" || mode === "batch");
+    var t = document.getElementById("i2i_notimpl_title");
+    if(t) t.textContent = { sketch:"Sketch", inpaint_sketch:"Inpaint sketch", batch:"Batch" }[mode] || "Not implemented";
+    if(mode === "inpaint"){
+      var acc = document.getElementById("acc_i2i_inpaint");
+      if(acc) acc.classList.add("open");
+      setTimeout(syncPaintStage, 0);
+    }
+  }
+
+  function i2iSetResizeTab(rt){
+    I2I.resizeTab = rt;
+    document.querySelectorAll("#img2img_tabs_resize button").forEach(function(b){
+      b.classList.toggle("selected", b.dataset.rtab === rt);
+    });
+    var a = document.getElementById("i2i_resize_to");
+    var b = document.getElementById("i2i_resize_by");
+    if(a) a.style.display = (rt === "to") ? "" : "none";
+    if(b) b.style.display = (rt === "by") ? "" : "none";
+    i2iUpdateScalePreview();
+  }
+
+  function i2iTargetSize(){
+    if(I2I.resizeTab === "by" && I2I.baseW){
+      var s = num("img2img_scale") || 1;
+      return [Math.max(64, Math.round(I2I.baseW * s / 8) * 8),
+              Math.max(64, Math.round(I2I.baseH * s / 8) * 8)];
+    }
+    return [Math.round(num("img2img_width")), Math.round(num("img2img_height"))];
+  }
+
+  function i2iUpdateScalePreview(){
+    var e = document.getElementById("img2img_scale_preview");
+    if(!e) return;
+    if(!I2I.baseW){ e.textContent = "Load an image to see the target resolution."; return; }
+    var sz = i2iTargetSize();
+    e.textContent = I2I.baseW + "x" + I2I.baseH + " \u2192 " + sz[0] + "x" + sz[1] +
+                    "   (scale " + (num("img2img_scale") || 1) + ")";
+  }
+
+  function syncPaintStage(){
+    var img = document.getElementById("i2i_paint_img");
+    var c = document.getElementById("i2i_paint_canvas");
+    if(!img || !c) return;
+    var r = img.getBoundingClientRect();
+    if(r.width > 0 && r.height > 0){
+      c.style.width = r.width + "px";
+      c.style.height = r.height + "px";
+    }
+  }
+
+  function i2iResetMask(w, h){
+    var c = document.getElementById("i2i_paint_canvas");
+    if(!c) return;
+    c.width = Math.max(1, w);
+    c.height = Math.max(1, h);
+    c.getContext("2d").clearRect(0, 0, c.width, c.height);
+    setTimeout(syncPaintStage, 0);
+  }
+
+  function i2iApplyImage(src, w, h){
+    I2I.baseSrc = src;
+    I2I.baseW = w;
+    I2I.baseH = h;
+    ["i2i_preview", "i2i_paint_img", "i2i_upload_base_img"].forEach(function(id){
+      var e = document.getElementById(id);
+      if(e) e.src = src;
+    });
+    var hint = document.getElementById("i2i_hint");
+    if(hint) hint.textContent = w + "x" + h + "  \u2014  drop another image, click to choose, or Ctrl+V";
+    // A1111 sets the "Resize to" sliders to the uploaded image's size
+    $("img2img_width").value = w; $("img2img_width_r").value = w;
+    $("img2img_height").value = h; $("img2img_height_r").value = h;
+    i2iResetMask(w, h);
+    i2iUpdateScalePreview();
+  }
+
+  function i2iLoadFile(file){
+    if(!file || (file.type && file.type.indexOf("image/") !== 0)) return;
+    var fr = new FileReader();
+    fr.onload = function(){
+      var im = new Image();
+      im.onload = function(){ i2iApplyImage(fr.result, im.naturalWidth, im.naturalHeight); };
+      im.onerror = function(){};
+      im.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+
+  function i2iWireDrop(dropId, inputId, onFile){
+    var drop = document.getElementById(dropId);
+    var inp = document.getElementById(inputId);
+    if(!drop || !inp) return;
+    drop.addEventListener("click", function(ev){
+      if(ev.target === inp) return;
+      inp.click();
+    });
+    inp.addEventListener("change", function(){ if(inp.files && inp.files[0]) onFile(inp.files[0]); });
+    drop.addEventListener("dragover", function(ev){ ev.preventDefault(); drop.classList.add("dragover"); });
+    drop.addEventListener("dragenter", function(ev){ ev.preventDefault(); drop.classList.add("dragover"); });
+    drop.addEventListener("dragleave", function(){ drop.classList.remove("dragover"); });
+    drop.addEventListener("drop", function(ev){
+      ev.preventDefault();
+      drop.classList.remove("dragover");
+      var f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if(f) onFile(f);
+    });
+  }
+
+  function i2iCanvasPos(c, ev){
+    var r = c.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) * (c.width / r.width),
+             y: (ev.clientY - r.top) * (c.height / r.height) };
+  }
+
+  function i2iPaintInit(){
+    var c = document.getElementById("i2i_paint_canvas");
+    if(!c) return;
+    var ctx = c.getContext("2d");
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    c.addEventListener("pointerdown", function(ev){
+      if(!I2I.baseSrc) return;
+      ev.preventDefault();
+      I2I.painting = true;
+      try { c.setPointerCapture(ev.pointerId); } catch(e){}
+      ctx.globalCompositeOperation = (I2I.brush === "eraser") ? "destination-out" : "source-over";
+      ctx.strokeStyle = "rgba(255,70,70,0.55)";
+      ctx.lineWidth = num("i2i_brush_size") || 40;
+      var p = i2iCanvasPos(c, ev);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + 0.01, p.y);
+      ctx.stroke();
+    });
+    c.addEventListener("pointermove", function(ev){
+      if(!I2I.painting) return;
+      ev.preventDefault();
+      ctx.lineWidth = num("i2i_brush_size") || 40;
+      var p = i2iCanvasPos(c, ev);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach(function(t){
+      c.addEventListener(t, function(){ I2I.painting = false; });
+    });
+  }
+
+  function i2iMaskDataUrl(){
+    var c = document.getElementById("i2i_paint_canvas");
+    if(!c || !c.width) return null;
+    var src = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    var painted = false;
+    for(var i = 3; i < src.length; i += 4){
+      if(src[i] > 8){ painted = true; break; }
+    }
+    if(!painted) return null;
+    var out = document.createElement("canvas");
+    out.width = c.width;
+    out.height = c.height;
+    var octx = out.getContext("2d");
+    var dst = octx.createImageData(c.width, c.height);
+    for(var j = 0; j < src.length; j += 4){
+      var v = src[j + 3] > 8 ? 255 : 0;
+      dst.data[j] = dst.data[j + 1] = dst.data[j + 2] = v;
+      dst.data[j + 3] = 255;
+    }
+    octx.putImageData(dst, 0, 0);
+    return out.toDataURL("image/png");
+  }
+
+  function i2iCurrentMask(){
+    if(I2I.mode === "inpaint") return i2iMaskDataUrl();
+    if(I2I.mode === "inpaint_upload") return I2I.maskSrc;
+    return null;
+  }
+
+  function i2iPayload(){
+    var sz = i2iTargetSize();
+    var p = {
+      prompt: $("img2img_prompt").value,
+      negative_prompt: $("img2img_neg_prompt").value,
+      steps: Math.round(num("img2img_steps")),
+      cfg_scale: num("img2img_cfg_scale"),
+      width: sz[0],
+      height: sz[1],
+      sampler_name: val("img2img_sampler_name"),
+      scheduler: val("img2img_scheduler_name"),
+      seed: Math.round(num("img2img_seed")),
+      batch_size: Math.round(num("img2img_batch_size")),
+      n_iter: Math.round(num("img2img_batch_count")),
+      denoising_strength: num("img2img_denoising_strength"),
+      resize_mode: parseInt(radioVal("resize_mode") || "0", 10),
+      restore_faces: $("img2img_restore_faces").checked,
+      tiling: $("img2img_tiling").checked,
+      override_settings: { sd_model_checkpoint: val("sd_model_checkpoint") },
+      init_images: [I2I.baseSrc]
+    };
+    var m = i2iCurrentMask();
+    if(m){
+      p.mask = m;
+      p.mask_blur = Math.round(num("img2img_mask_blur"));
+      p.inpainting_mask_invert = parseInt(radioVal("mask_mode") || "0", 10);
+      p.inpainting_fill = parseInt(radioVal("inpaint_fill") || "1", 10);
+      p.inpaint_full_res = parseInt(radioVal("inpaint_area") || "0", 10);
+      p.inpaint_full_res_padding = Math.round(num("img2img_pad"));
+    }
+    return p;
+  }
+
+  function i2iShowImage(){
+    var g = document.getElementById("img2img_gallery");
+    if(!g || !I2I.images.length) return;
+    g.querySelectorAll("img").forEach(function(e){ e.remove(); });
+    var empty = g.querySelector(".empty");
+    if(empty) empty.style.display = "none";
+    var im = document.createElement("img");
+    im.src = I2I.images[I2I.idx];
+    g.appendChild(im);
+    var nav = document.getElementById("img2img_gallery_nav");
+    if(nav) nav.style.display = I2I.images.length > 1 ? "flex" : "none";
+    var gc = document.getElementById("img2img_gcount");
+    if(gc) gc.textContent = (I2I.idx + 1) + "/" + I2I.images.length;
+  }
+
+  var i2iTimer = null;
+  function i2iStartProgress(){
+    document.getElementById("img2img_progress_wrap").classList.add("active");
+    var f = document.getElementById("img2img_progress_fill");
+    f.classList.add("indeterminate");
+    f.style.width = "35%";
+    document.getElementById("img2img_progress_label").textContent = "Generating\u2026";
+    document.getElementById("img2img_progress_eta").textContent = "";
+    i2iTimer = setInterval(i2iPollProgress, 900);
+  }
+  function i2iStopProgress(){
+    if(i2iTimer) clearInterval(i2iTimer);
+    i2iTimer = null;
+    document.getElementById("img2img_progress_wrap").classList.remove("active");
+  }
+  function i2iPollProgress(){
+    fetch("/sdapi/v1/progress").then(function(r){ return r.json(); }).then(function(p){
+      var f = document.getElementById("img2img_progress_fill");
+      if(p && typeof p.progress === "number" && p.progress > 0){
+        f.classList.remove("indeterminate");
+        f.style.width = Math.round(p.progress * 100) + "%";
+        document.getElementById("img2img_progress_label").textContent =
+          "Sampling " + ((p.state && p.state.sampling_step) || "") +
+          " \u2014 " + Math.round(p.progress * 100) + "%";
+        if(p.eta_relative > 0)
+          document.getElementById("img2img_progress_eta").textContent = "ETA " + p.eta_relative.toFixed(1) + "s";
+      } else {
+        f.classList.add("indeterminate");
+      }
+    }).catch(function(){});
+  }
+
+  function i2iGenerate(){
+    if(I2I.busy) return;
+    var lbl = document.getElementById("img2img_progress_label");
+    if(!I2I.baseSrc){
+      document.getElementById("img2img_progress_wrap").classList.add("active");
+      if(lbl) lbl.textContent = "Load an input image first \u2014 drop one, click the box, or press Ctrl+V";
+      return;
+    }
+    I2I.busy = true;
+    var b1 = document.getElementById("img2img_generate");
+    var b2 = document.getElementById("img2img_generate2");
+    if(b1) b1.disabled = true;
+    if(b2) b2.disabled = true;
+    document.getElementById("img2img_gen_overlay").classList.add("active");
+    i2iStartProgress();
+    var t0 = Date.now();
+
+    fetch("/sdapi/v1/img2img", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(i2iPayload())
+    }).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP " + r.status)); });
+      return r.json();
+    }).then(function(d){
+      I2I.images = (d.images || []).map(function(b){ return "data:image/png;base64," + b; });
+      I2I.idx = 0;
+      i2iShowImage();
+      var info = d.info || "";
+      document.getElementById("img2img_generation_info").textContent = info;
+      try { var inf = JSON.parse(info); if(inf.seed !== undefined) I2I.lastSeed = inf.seed; } catch(e){}
+      document.getElementById("img2img_progress_label").textContent =
+        "Done in " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
+    }).catch(function(e){
+      var f = document.getElementById("img2img_progress_fill");
+      document.getElementById("img2img_progress_label").textContent = "Error: " + e.message;
+      if(f){ f.classList.remove("indeterminate"); f.style.width = "100%"; f.style.background = "#dc2626"; }
+      setTimeout(function(){ if(f) f.style.background = ""; }, 2000);
+    }).then(function(){
+      I2I.busy = false;
+      if(b1) b1.disabled = false;
+      if(b2) b2.disabled = false;
+      document.getElementById("img2img_gen_overlay").classList.remove("active");
+      setTimeout(i2iStopProgress, 1200);
+    });
+  }
+
+  function i2iInit(){
+    // sampler / scheduler / style dropdowns (same lists as txt2img)
+    SAMPLERS.forEach(function(s){ $("img2img_sampler_name").insertAdjacentHTML("beforeend", "<option>" + s + "</option>"); });
+    SCHEDULERS.forEach(function(s){ $("img2img_scheduler_name").insertAdjacentHTML("beforeend", "<option>" + s + "</option>"); });
+    $("img2img_sampler_name").value = "Euler";
+    $("img2img_scheduler_name").value = "Simple";
+    ["img2img_style1", "img2img_style2"].forEach(function(id){
+      STYLES.forEach(function(s){ if(s !== "None") $(id).insertAdjacentHTML("beforeend", "<option>" + s + "</option>"); });
+    });
+
+    // slider <-> number sync
+    [["img2img_steps_r","img2img_steps"],["img2img_width_r","img2img_width"],
+     ["img2img_height_r","img2img_height"],["img2img_batch_count_r","img2img_batch_count"],
+     ["img2img_batch_size_r","img2img_batch_size"],["img2img_cfg_scale_r","img2img_cfg_scale"],
+     ["img2img_denoising_strength_r","img2img_denoising_strength"],
+     ["img2img_scale_r","img2img_scale"],["img2img_mask_blur_r","img2img_mask_blur"],
+     ["img2img_pad_r","img2img_pad"],["i2i_brush_size_r","i2i_brush_size"]].forEach(function(pair){
+      var r = $(pair[0]), n = $(pair[1]);
+      r.addEventListener("input", function(){ n.value = r.value; });
+      n.addEventListener("input", function(){ r.value = n.value; });
+    });
+    $("img2img_scale").addEventListener("input", i2iUpdateScalePreview);
+    $("img2img_scale_r").addEventListener("input", i2iUpdateScalePreview);
+
+    i2iWireDrop("i2i_drop", "i2i_file", i2iLoadFile);
+    i2iWireDrop("i2i_upload_base_drop", "i2i_file_base", i2iLoadFile);
+    i2iWireDrop("i2i_upload_mask_drop", "i2i_file_mask", function(f){
+      var fr = new FileReader();
+      fr.onload = function(){
+        I2I.maskSrc = fr.result;
+        var e = document.getElementById("i2i_upload_mask_img");
+        if(e) e.src = fr.result;
+      };
+      fr.readAsDataURL(f);
+    });
+
+    document.querySelectorAll("#mode_img2img button").forEach(function(b){
+      b.addEventListener("click", function(){ i2iSetMode(b.dataset.mode); });
+    });
+    document.querySelectorAll("#img2img_tabs_resize button").forEach(function(b){
+      b.addEventListener("click", function(){ i2iSetResizeTab(b.dataset.rtab); });
+    });
+    document.querySelectorAll("#main_tabs button[data-tab]").forEach(function(b){
+      b.addEventListener("click", function(){ switchHost(b.dataset.tab); });
+    });
+
+    $("i2i_brush").addEventListener("click", function(){
+      I2I.brush = "brush";
+      $("i2i_brush").classList.add("selected");
+      $("i2i_eraser").classList.remove("selected");
+    });
+    $("i2i_eraser").addEventListener("click", function(){
+      I2I.brush = "eraser";
+      $("i2i_eraser").classList.add("selected");
+      $("img2img_brush").classList.remove("selected");
+    });
+    $("i2i_mask_clear").addEventListener("click", function(){ i2iResetMask(I2I.baseW, I2I.baseH); });
+
+    $("img2img_res_switch").addEventListener("click", function(){
+      var w = $("img2img_width").value;
+      $("img2img_width").value = $("img2img_height").value;
+      $("img2img_height").value = w;
+      $("img2img_width_r").value = $("img2img_width").value;
+      $("img2img_height_r").value = $("img2img_height").value;
+    });
+    $("img2img_detect_size").addEventListener("click", function(){
+      if(!I2I.baseW) return;
+      $("img2img_width").value = I2I.baseW;
+      $("img2img_width_r").value = I2I.baseW;
+      $("img2img_height").value = I2I.baseH;
+      $("img2img_height_r").value = I2I.baseH;
+    });
+
+    $("img2img_generate").onclick = i2iGenerate;
+    $("img2img_generate2").onclick = i2iGenerate;
+    $("img2img_interrupt").onclick = interrupt;
+    $("img2img_skip").onclick = interrupt;
+    $("img2img_seed_random").onclick = $("img2img_btn_random").onclick = function(){
+      $("img2img_seed").value = rndSeed();
+    };
+    $("img2img_seed_reuse").onclick = $("img2img_btn_reuse").onclick = function(){
+      if(I2I.lastSeed !== null) $("img2img_seed").value = I2I.lastSeed;
+    };
+    $("img2img_btn_clear").onclick = function(){
+      $("img2img_prompt").value = "";
+      $("img2img_neg_prompt").value = "";
+      countTokens("img2img");
+    };
+    $("img2img_btn_clear_img").onclick = function(){
+      I2I.baseSrc = null; I2I.baseW = 0; I2I.baseH = 0; I2I.maskSrc = null;
+      ["i2i_preview", "i2i_paint_img", "i2i_upload_base_img", "i2i_upload_mask_img"].forEach(function(id){
+        var e = document.getElementById(id);
+        if(e) e.removeAttribute("src");
+      });
+      var hint = document.getElementById("i2i_hint");
+      if(hint) hint.textContent = "Drop an image here, click to choose a file, or paste with Ctrl+V";
+      i2iResetMask(1, 1);
+    };
+    $("img2img_style_apply").onclick = function(){
+      var add = [$("img2img_style1").value, $("img2img_style2").value].filter(function(s){ return s !== "None"; });
+      if(!add.length) return;
+      var pre = { "Anime":"anime style, ", "Anime detailed":"anime style, highly detailed, ",
+                  "Photographic":"photorealistic, ", "Cinematic":"cinematic lighting, " }[add[0]] || "";
+      var p = $("img2img_prompt");
+      if(pre && p.value.indexOf(pre.trim()) === -1) p.value = pre + p.value;
+      countTokens("img2img");
+    };
+    $("img2img_btn_save").onclick = function(){
+      if(!I2I.images.length) return;
+      var a = document.createElement("a");
+      a.href = I2I.images[I2I.idx];
+      a.download = "anima-img2img-" + Date.now() + ".png";
+      a.click();
+    };
+    $("img2img_send_inpaint").onclick = function(){
+      if(!I2I.images.length) return;
+      var src = I2I.images[I2I.idx];
+      var im = new Image();
+      im.onload = function(){
+        i2iApplyImage(src, im.naturalWidth, im.naturalHeight);
+        i2iSetMode("inpaint");
+      };
+      im.src = src;
+    };
+    $("img2img_gprev").onclick = function(){
+      if(I2I.images.length){ I2I.idx = (I2I.idx - 1 + I2I.images.length) % I2I.images.length; i2iShowImage(); }
+    };
+    $("img2img_gnext").onclick = function(){
+      if(I2I.images.length){ I2I.idx = (I2I.idx + 1) % I2I.images.length; i2iShowImage(); }
+    };
+
+    document.addEventListener("paste", function(ev){
+      if(ACTIVE_HOST !== "img2img") return;
+      var items = (ev.clipboardData && ev.clipboardData.items) || [];
+      for(var i = 0; i < items.length; i++){
+        if(items[i].type && items[i].type.indexOf("image") === 0){
+          i2iLoadFile(items[i].getAsFile());
+          ev.preventDefault();
+          break;
+        }
+      }
+    });
+    window.addEventListener("resize", syncPaintStage);
+
+    i2iPaintInit();
+    i2iSetMode("img2img");
+    i2iSetResizeTab("to");
+    i2iResetMask(1, 1);
+  }
+
+  /* ---------- boot: model list + ping ---------- */
+  fetch("/sdapi/v1/sd-models").then(function(r){return r.json();}).then(function(ms){
+    var sel=$("sd_model_checkpoint");
+    sel.innerHTML="";
+    ms.forEach(function(m){ sel.insertAdjacentHTML("beforeend",'<option value="'+m.title+'">'+m.model_name+"</option>"); });
+    if(ms.length) sel.value=ms[0].title;
+  }).catch(function(){
+    $("sd_model_checkpoint").innerHTML='<option value="anima-base-v1.0.safetensors">anima-base-v1.0.safetensors</option>';
+  });
+
+  fetch("/internal/ping").then(function(r){return r.json();}).then(function(){
+    $("ping").textContent="connected";
+  }).catch(function(){ $("ping").textContent="backend unreachable"; });
+
+  applySeedButtons();
+  i2iInit();
+  switchHost("txt2img");
+  countTokens("txt2img");
+  updateHiresRes();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Notices and attribution
+
+This project is a derivative work of
+[AUTOMATIC1111/stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
+("A1111"), which is licensed under the GNU Affero General Public License v3.0.
+
+Specifically reproduced from A1111:
+
+- the layout and control inventory of the txt2img / img2img / extra-networks interfaces
+  (`modules/ui.py`, `modules/ui_toprow.py`, `modules/ui_extra_networks.py`,
+  `extensions-builtin/Lora/ui_extra_networks_lora.py`)
+- CSS rules and values from `style.css`, including the extra-network card geometry
+  (`16rem x 24rem`, hover ring, action bar), the pane/control bar layout, and the
+  copy-path / metadata / edit card button glyphs
+- the sort-key, sort-direction, tree-view and refresh SVG icons (inline `mask-image` data URIs)
+  from `style.css`
+- `html/card-no-preview.png`, used as the placeholder art for extra-network cards
+- the A1111-compatible API surface (`/sdapi/v1/*`) and the `<lora:...>` prompt syntax
+- the image resize semantics in `a1111_resize()` (Just resize / Crop and resize / Resize and fill),
+  a Python port of `modules/images.py:resize_image`
+
+Because A1111 is AGPL-3.0, this repository is licensed under AGPL-3.0 as a whole. See `LICENSE`.
+
+The Anima model weights are distributed separately by CircleStone Labs / Comfy Org under their own
+licence (see the model card at https://huggingface.co/circlestone-labs/Anima). No model weights are
+included in this repository.
