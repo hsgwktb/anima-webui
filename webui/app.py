@@ -567,8 +567,21 @@ async def skip():
 COMFY_INPUT = "/content/ComfyUI/input"
 
 
+def _b64_bytes(data):
+    """Decode base64 that may carry a data-URL prefix.
+
+    Browsers hand data URLs to `init_images` / `mask`; A1111's decode_base64_to_image
+    strips the same prefix, so accept both forms.
+    """
+    s = (data or "").strip()
+    if s.startswith("data:"):
+        parts = s.split(",", 1)
+        s = parts[1] if len(parts) == 2 else ""
+    return base64.b64decode(s)
+
+
 def _pil_from_b64(data):
-    return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
+    return Image.open(io.BytesIO(_b64_bytes(data))).convert("RGB")
 
 
 def _save_comfy_input(img, prefix):
@@ -627,7 +640,7 @@ def prepare_mask(p, init_img, mode, w, h):
     raw = p.get("mask")
     if not raw:
         return None
-    m = Image.open(io.BytesIO(base64.b64decode(raw))).convert("L")
+    m = Image.open(io.BytesIO(_b64_bytes(raw))).convert("L")
     if m.size != (w, h):
         m = a1111_resize(mode, m.convert("RGB"), w, h).convert("L")
     blur = float(p.get("mask_blur") or 0)
@@ -744,7 +757,10 @@ async def img2img_api(req: Request):
     if mode not in (0, 1, 2):
         mode = 0
 
-    src = _pil_from_b64(init_list[0])
+    try:
+        src = _pil_from_b64(init_list[0])
+    except Exception as e:
+        return JSONResponse({"detail": "Could not decode the init image: %r" % e}, status_code=400)
     w = int(p.get("width") or src.width)
     h = int(p.get("height") or src.height)
     init_img = a1111_resize(mode, src, w, h)
