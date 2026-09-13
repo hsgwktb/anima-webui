@@ -82,38 +82,54 @@ async def comfy_post(path, payload):
                 return r.status, {"raw": txt}
 
 
+# Two checkpoint families, dispatched by which folder the file sits in:
+#   anima -> ComfyUI "diffusion model" split files (UNETLoader + CLIPLoader + VAELoader);
+#            a Cosmos flow model with shift=3, so it has its own sigma curve.
+#   sdxl  -> plain SDXL single-file checkpoints (CheckpointLoaderSimple = UNet + dual CLIP + VAE);
+#            epsilon prediction, so the whole A1111 sampler/scheduler set applies normally.
+FAMILY_DIRS = (("diffusion_models", "anima"), ("checkpoints", "sdxl"))
+
+
 def list_models():
     out = []
-    d = os.path.join(MODELS_DIR, "diffusion_models")
-    if os.path.isdir(d):
+    for sub, family in FAMILY_DIRS:
+        d = os.path.join(MODELS_DIR, sub)
+        if not os.path.isdir(d):
+            continue
         for f in sorted(os.listdir(d)):
-            if f.endswith(".safetensors"):
-                out.append({
-                    "title": f,
-                    "model_name": f,
-                    "hash": None,
-                    "sha256": None,
-                    "filename": os.path.join(d, f),
-                    "config": None,
-                })
+            if not f.endswith(".safetensors") or f.startswith("put_"):
+                continue
+            out.append({
+                "title": f,
+                "model_name": f,
+                "hash": None,
+                "sha256": None,
+                "filename": os.path.join(d, f),
+                "config": None,
+                "family": family,
+            })
     return out
 
 
 def pick_model(requested):
-    """Resolve the requested checkpoint to a file present on disk."""
-    names = [m["model_name"] for m in list_models()]
+    """Resolve a requested checkpoint name -> (model_name, family)."""
+    models = list_models()
     if requested:
         base = os.path.basename(str(requested))
-        if base in names:
-            return base
-        for n in names:
-            if base and base.lower() in n.lower():
-                return n
+        for m in models:
+            if base == m["model_name"]:
+                return m["model_name"], m["family"]
+        for m in models:
+            if base and base.lower() in m["model_name"].lower():
+                return m["model_name"], m["family"]
     for pref in ("anima-base-v1.0.safetensors", "anima-turbo-v1.1.safetensors",
-                 "anima-turbo-v1.0.safetensors", "anima-aesthetic-v1.1.safetensors"):
-        if pref in names:
-            return pref
-    return names[0] if names else "anima-base-v1.0.safetensors"
+                 "anima-aesthetic-v1.1.safetensors"):
+        for m in models:
+            if m["model_name"] == pref:
+                return m["model_name"], m["family"]
+    if models:
+        return models[0]["model_name"], models[0]["family"]
+    return "anima-base-v1.0.safetensors", "anima"
 
 
 # ---------------------------------------------------------------- extra networks (loras)
@@ -203,10 +219,8 @@ def parse_loras(text):
 
 
 # ---------------------------------------------------------------- graph
-def build_graph(p):
-    req = (p.get("override_settings") or {}).get("sd_model_checkpoint")
-    ckpt = pick_model(req)
-
+def _common_params(p):
+    """Sampling parameters + prompt parsing, shared by both families."""
     seed = p.get("seed", -1)
     try:
         seed = int(seed)
@@ -214,74 +228,117 @@ def build_graph(p):
         seed = -1
     if seed < 0:
         seed = random.randint(0, 0xFFFFFFFF)
-
     sampler, sched = resolve_sampler(p.get("sampler_name"), p.get("scheduler"))
-    w = max(64, int(p.get("width", 1024)))
-    h = max(64, int(p.get("height", 1024)))
-    bs = max(1, min(8, int(p.get("batch_size", 1))))
-    steps = max(1, int(p.get("steps", 30)))
-    cfg = float(p.get("cfg_scale", 4.0))
-
     pos, lora_tags = parse_loras(p.get("prompt"))
     neg, _ = parse_loras(p.get("negative_prompt"))
-
-    g = {
-        "1": {"class_type": "UNETLoader",
-              "inputs": {"unet_name": ckpt, "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader",
-              "inputs": {"clip_name": "qwen_3_06b_base.safetensors",
-                         "type": CLIP_TYPE, "device": "default"}},
-        "3": {"class_type": "VAELoader",
-              "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": pos, "clip": ["2", 0]}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"text": neg, "clip": ["2", 0]}},
-        "6": {"class_type": "EmptyLatentImage",
-              "inputs": {"width": w, "height": h, "batch_size": bs}},
-        "7": {"class_type": "KSampler",
-              "inputs": {"model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0],
-                         "latent_image": ["6", 0], "seed": seed, "steps": steps,
-                         "cfg": cfg, "sampler_name": sampler, "scheduler": sched,
-                         "denoise": 1.0}},
-        "8": {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
-        "9": {"class_type": "SaveImage",
-              "inputs": {"filename_prefix": "Anima", "images": ["8", 0]}},
+    return {
+        "seed": seed, "sampler": sampler, "sched": sched,
+        "w": max(64, int(p.get("width", 1024))),
+        "h": max(64, int(p.get("height", 1024))),
+        "bs": max(1, min(8, int(p.get("batch_size", 1)))),
+        "steps": max(1, int(p.get("steps", 30))),
+        "cfg": float(p.get("cfg_scale", 4.0)),
+        "pos": pos, "neg": neg, "lora_tags": lora_tags,
     }
 
-    # Anima loras are model-only (the official template uses LoraLoaderModelOnly),
-    # so each tag becomes one node chained between the UNET and the sampler.
+
+def _loaders(g, ckpt, family, p):
+    """Register the loader nodes for this family; return (model_ref, clip_ref, vae_ref)."""
+    ov = p.get("override_settings") or {}
+    clip_skip = int(ov.get("CLIP_stop_at_last_layers") or 1)
+    sd_vae = ov.get("sd_vae") or "Automatic"
+
+    if family == "sdxl":
+        # one file holds UNet (output 0), CLIP (1) and VAE (2)
+        g["1"] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}}
+        model_ref, clip_ref, vae_ref = ["1", 0], ["1", 1], ["1", 2]
+        if clip_skip > 1:
+            g["30"] = {"class_type": "CLIPSetLastLayer",
+                       "inputs": {"clip": clip_ref, "stop_at_clip_layer": -clip_skip}}
+            clip_ref = ["30", 0]
+        if sd_vae not in ("Automatic", "None", "none", ""):
+            g["31"] = {"class_type": "VAELoader", "inputs": {"vae_name": sd_vae}}
+            vae_ref = ["31", 0]
+        return model_ref, clip_ref, vae_ref
+
+    g["1"] = {"class_type": "UNETLoader",
+              "inputs": {"unet_name": ckpt, "weight_dtype": "default"}}
+    g["2"] = {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": "qwen_3_06b_base.safetensors",
+                         "type": CLIP_TYPE, "device": "default"}}
+    g["3"] = {"class_type": "VAELoader",
+              "inputs": {"vae_name": "qwen_image_vae.safetensors"}}
+    return ["1", 0], ["2", 0], ["3", 0]
+
+
+def _loras(g, family, lora_tags, model_ref, clip_ref):
+    """Chain the <lora:...> tags.
+
+    Anima loras are model-only (that is what the official template does). SDXL loras usually
+    also train the text encoders, so they go through LoraLoader, which carries a clip branch.
+    """
     known = scan_loras()
-    model_ref = ["1", 0]
-    loras_used, lora_missing = [], []
+    used, missing = [], []
     for i, (name, te_w, unet_w) in enumerate(lora_tags):
         it = resolve_lora(name, known)
         if it is None:
-            lora_missing.append(name)
+            missing.append(name)
             continue
         nid = "2%02d" % i
-        g[nid] = {"class_type": "LoraLoaderModelOnly",
-                  "inputs": {"lora_name": it["rel"], "strength_model": unet_w,
-                             "model": model_ref}}
-        model_ref = [nid, 0]
-        loras_used.append({"name": it["alias"], "weight": unet_w, "file": it["rel"]})
-    g["7"]["inputs"]["model"] = model_ref
+        if family == "sdxl" and clip_ref is not None:
+            g[nid] = {"class_type": "LoraLoader",
+                      "inputs": {"lora_name": it["rel"], "strength_model": unet_w,
+                                 "strength_clip": te_w, "model": model_ref, "clip": clip_ref}}
+            model_ref, clip_ref = [nid, 0], [nid, 1]
+        else:
+            g[nid] = {"class_type": "LoraLoaderModelOnly",
+                      "inputs": {"lora_name": it["rel"], "strength_model": unet_w,
+                                 "model": model_ref}}
+            model_ref = [nid, 0]
+        used.append({"name": it["alias"], "weight": unet_w, "file": it["rel"]})
+    return model_ref, clip_ref, used, missing
+
+
+def build_graph(p):
+    ckpt, family = pick_model((p.get("override_settings") or {}).get("sd_model_checkpoint"))
+    c = _common_params(p)
+    g = {}
+    model_ref, clip_ref, vae_ref = _loaders(g, ckpt, family, p)
+    model_ref, clip_ref, loras_used, lora_missing = _loras(
+        g, family, c["lora_tags"], model_ref, clip_ref)
+
+    g["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": c["pos"], "clip": clip_ref}}
+    g["5"] = {"class_type": "CLIPTextEncode", "inputs": {"text": c["neg"], "clip": clip_ref}}
+    g["6"] = {"class_type": "EmptyLatentImage",
+              "inputs": {"width": c["w"], "height": c["h"], "batch_size": c["bs"]}}
+    g["7"] = {"class_type": "KSampler",
+              "inputs": {"model": model_ref, "positive": ["4", 0], "negative": ["5", 0],
+                         "latent_image": ["6", 0], "seed": c["seed"], "steps": c["steps"],
+                         "cfg": c["cfg"], "sampler_name": c["sampler"],
+                         "scheduler": c["sched"], "denoise": 1.0}}
+    g["8"] = {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": vae_ref}}
+    g["9"] = {"class_type": "SaveImage",
+              "inputs": {"filename_prefix": "Anima" if family == "anima" else "NoobAI",
+                         "images": ["8", 0]}}
 
     if p.get("enable_hr"):
         scale = float(p.get("hr_scale", 2.0))
-        w2 = max(64, int(round(w * scale / 8) * 8))
-        h2 = max(64, int(round(h * scale / 8) * 8))
-        hr_steps = int(p.get("hr_second_pass_steps") or 0) or steps
+        w2 = max(64, int(round(c["w"] * scale / 8) * 8))
+        h2 = max(64, int(round(c["h"] * scale / 8) * 8))
+        hr_steps = int(p.get("hr_second_pass_steps") or 0) or c["steps"]
         g["10"] = {"class_type": "LatentUpscale",
                    "inputs": {"upscale_method": "bilinear", "width": w2, "height": h2,
                               "crop": "disabled", "samples": ["7", 0]}}
         g["11"] = {"class_type": "KSampler",
                    "inputs": {"model": model_ref, "positive": ["4", 0], "negative": ["5", 0],
-                              "latent_image": ["10", 0], "seed": seed, "steps": hr_steps,
-                              "cfg": cfg, "sampler_name": sampler, "scheduler": sched,
+                              "latent_image": ["10", 0], "seed": c["seed"], "steps": hr_steps,
+                              "cfg": c["cfg"], "sampler_name": c["sampler"],
+                              "scheduler": c["sched"],
                               "denoise": float(p.get("denoising_strength", 0.5))}}
         g["8"]["inputs"]["samples"] = ["11", 0]
 
-    return (g, seed, ckpt, sampler, sched, steps, (w, h), bs, cfg,
-            loras_used, lora_missing)
+    return (g, c["seed"], ckpt, c["sampler"], c["sched"], c["steps"], (c["w"], c["h"]),
+            c["bs"], c["cfg"], loras_used, lora_missing)
 
 
 
@@ -410,7 +467,9 @@ async def ping():
 
 @app.get("/internal/health")
 async def health():
-    models = [m["model_name"] for m in list_models()]
+    by_family = {}
+    for m in list_models():
+        by_family.setdefault(m["family"], []).append(m["model_name"])
     te = os.path.exists(os.path.join(MODELS_DIR, "text_encoders", "qwen_3_06b_base.safetensors"))
     vae = os.path.exists(os.path.join(MODELS_DIR, "vae", "qwen_image_vae.safetensors"))
     comfy_ok, err = False, None
@@ -420,7 +479,7 @@ async def health():
     except Exception as e:
         err = repr(e)
     return {"comfy_ok": comfy_ok, "comfy_error": err, "clip_type": CLIP_TYPE,
-            "diffusion_models": models, "text_encoder_ok": te, "vae_ok": vae,
+            "models": by_family, "text_encoder_ok": te, "vae_ok": vae,
             "loras": [it["alias"] for it in scan_loras()],
             "lora_dir": LORA_DIR}
 
@@ -526,9 +585,11 @@ async def schedulers():
 
 @app.get("/sdapi/v1/options")
 async def options_get():
-    return {"sd_model_checkpoint": pick_model(None), "sd_vae": "Automatic",
-            "CLIP_stop_at_last_layers": 1, "samples_format": "png",
-            "sampler_name": "Euler", "scheduler": "Simple", "steps": 30, "cfg_scale": 4.0}
+    name, family = pick_model(None)
+    return {"sd_model_checkpoint": name, "sd_model_family": family,
+            "sd_vae": "Automatic", "CLIP_stop_at_last_layers": 1,
+            "samples_format": "png", "sampler_name": "Euler", "scheduler": "Simple",
+            "steps": 30, "cfg_scale": 4.0}
 
 
 @app.post("/sdapi/v1/options")
@@ -652,85 +713,51 @@ def prepare_mask(p, init_img, mode, w, h):
 
 
 def build_img2img_graph(p, init_img, mask_img):
-    req = (p.get("override_settings") or {}).get("sd_model_checkpoint")
-    ckpt = pick_model(req)
-
-    seed = p.get("seed", -1)
-    try:
-        seed = int(seed)
-    except (TypeError, ValueError):
-        seed = -1
-    if seed < 0:
-        seed = random.randint(0, 0xFFFFFFFF)
-
-    sampler, sched = resolve_sampler(p.get("sampler_name"), p.get("scheduler"))
+    ckpt, family = pick_model((p.get("override_settings") or {}).get("sd_model_checkpoint"))
+    c = _common_params(p)
     w, h = init_img.size
-    bs = max(1, min(8, int(p.get("batch_size", 1))))
-    steps = max(1, int(p.get("steps", 30)))
-    cfg = float(p.get("cfg_scale", 4.0))
+    c["w"], c["h"] = w, h                       # img2img size comes from the (resized) input
     strength = min(1.0, max(0.0, float(p.get("denoising_strength", 0.75))))
 
-    pos, lora_tags = parse_loras(p.get("prompt"))
-    neg, _ = parse_loras(p.get("negative_prompt"))
+    g = {}
+    model_ref, clip_ref, vae_ref = _loaders(g, ckpt, family, p)
+    model_ref, clip_ref, loras_used, lora_missing = _loras(
+        g, family, c["lora_tags"], model_ref, clip_ref)
 
-    init_name = _save_comfy_input(init_img, "anima_i2i")
+    init_name = _save_comfy_input(init_img, "%s_i2i" % family)
 
-    g = {
-        "1": {"class_type": "UNETLoader",
-              "inputs": {"unet_name": ckpt, "weight_dtype": "default"}},
-        "2": {"class_type": "CLIPLoader",
-              "inputs": {"clip_name": "qwen_3_06b_base.safetensors",
-                         "type": CLIP_TYPE, "device": "default"}},
-        "3": {"class_type": "VAELoader",
-              "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
-        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": pos, "clip": ["2", 0]}},
-        "5": {"class_type": "CLIPTextEncode", "inputs": {"text": neg, "clip": ["2", 0]}},
-        # LoadImage -> VAEEncode is A1111's "encode the init image" step
-        "20": {"class_type": "LoadImage", "inputs": {"image": init_name, "upload": "image"}},
-        "21": {"class_type": "VAEEncode", "inputs": {"pixels": ["20", 0], "vae": ["3", 0]}},
-    }
+    g["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": c["pos"], "clip": clip_ref}}
+    g["5"] = {"class_type": "CLIPTextEncode", "inputs": {"text": c["neg"], "clip": clip_ref}}
+    # LoadImage -> VAEEncode is A1111's "encode the init image" step
+    g["20"] = {"class_type": "LoadImage", "inputs": {"image": init_name, "upload": "image"}}
+    g["21"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["20", 0], "vae": vae_ref}}
 
     latent_ref = ["21", 0]
     if mask_img is not None:
-        mask_name = _save_comfy_input(mask_img, "anima_mask")
+        mask_name = _save_comfy_input(mask_img, "%s_mask" % family)
         g["23"] = {"class_type": "LoadImage", "inputs": {"image": mask_name, "upload": "image"}}
         g["24"] = {"class_type": "ImageToMask", "inputs": {"image": ["23", 0], "channel": "red"}}
         g["25"] = {"class_type": "SetLatentNoiseMask",
                    "inputs": {"samples": latent_ref, "mask": ["24", 0]}}
         latent_ref = ["25", 0]
 
-    if bs > 1:
+    if c["bs"] > 1:
         g["26"] = {"class_type": "RepeatLatentBatch",
-                   "inputs": {"samples": latent_ref, "amount": bs}}
+                   "inputs": {"samples": latent_ref, "amount": c["bs"]}}
         latent_ref = ["26", 0]
 
     g["7"] = {"class_type": "KSampler",
-              "inputs": {"model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0],
-                         "latent_image": latent_ref, "seed": seed, "steps": steps,
-                         "cfg": cfg, "sampler_name": sampler, "scheduler": sched,
-                         "denoise": strength}}
-    g["8"] = {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}}
+              "inputs": {"model": model_ref, "positive": ["4", 0], "negative": ["5", 0],
+                         "latent_image": latent_ref, "seed": c["seed"], "steps": c["steps"],
+                         "cfg": c["cfg"], "sampler_name": c["sampler"],
+                         "scheduler": c["sched"], "denoise": strength}}
+    g["8"] = {"class_type": "VAEDecode", "inputs": {"samples": ["7", 0], "vae": vae_ref}}
     g["9"] = {"class_type": "SaveImage",
-              "inputs": {"filename_prefix": "Anima-i2i", "images": ["8", 0]}}
+              "inputs": {"filename_prefix": "Anima-i2i" if family == "anima" else "NoobAI-i2i",
+                         "images": ["8", 0]}}
 
-    known = scan_loras()
-    model_ref = ["1", 0]
-    loras_used, lora_missing = [], []
-    for i, (name, te_w, unet_w) in enumerate(lora_tags):
-        it = resolve_lora(name, known)
-        if it is None:
-            lora_missing.append(name)
-            continue
-        nid = "2%02d" % i
-        g[nid] = {"class_type": "LoraLoaderModelOnly",
-                  "inputs": {"lora_name": it["rel"], "strength_model": unet_w,
-                             "model": model_ref}}
-        model_ref = [nid, 0]
-        loras_used.append({"name": it["alias"], "weight": unet_w, "file": it["rel"]})
-    g["7"]["inputs"]["model"] = model_ref
-
-    return (g, seed, ckpt, sampler, sched, steps, (w, h), bs, cfg,
-            loras_used, lora_missing)
+    return (g, c["seed"], ckpt, c["sampler"], c["sched"], c["steps"], (w, h),
+            c["bs"], c["cfg"], loras_used, lora_missing)
 
 
 def infotext_img2img(p, seed, ckpt, sampler, sched, steps, size, cfg, loras, missing):

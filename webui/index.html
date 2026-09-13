@@ -408,6 +408,7 @@ input.extra-network-control--search-text:focus{border-color:var(--orange);outlin
 .radio-row input[type=radio]:checked::after{
   content:"";position:absolute;left:4px;top:4px;width:5px;height:5px;border-radius:50%;background:#fff;
 }
+.sched-hint{font-size:12px;color:var(--text-dim);line-height:1.55;margin-top:2px}
 
 /* ---------- footer ---------- */
 footer{
@@ -552,6 +553,7 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
               <select class="sd-input" id="scheduler_name"></select>
             </div>
           </div>
+          <div class="sched-hint" id="schedule_hint"></div>
           <div class="field"><label class="slider-label">Sampling steps</label>
             <div class="slider"><input type="range" id="steps_r" min="1" max="150" step="1" value="30"><input type="number" id="steps" min="1" max="150" step="1" value="30"></div>
           </div>
@@ -800,6 +802,7 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
               <div class="field"><label>Sampling method</label><select class="sd-input" id="img2img_sampler_name"></select></div>
               <div class="field"><label>Schedule type</label><select class="sd-input" id="img2img_scheduler_name"></select></div>
             </div>
+            <div class="sched-hint" id="img2img_schedule_hint"></div>
             <div class="field"><label class="slider-label">Sampling steps</label>
               <div class="slider"><input type="range" id="img2img_steps_r" min="1" max="150" step="1" value="30"><input type="number" id="img2img_steps" min="1" max="150" step="1" value="30"></div>
             </div>
@@ -1068,7 +1071,7 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
       hr_upscaler: val("hr_upscaler"),
       hr_second_pass_steps: Math.round(num("hr_steps")),
       denoising_strength: num("denoising"),
-      override_settings: { sd_model_checkpoint: val("sd_model_checkpoint") }
+      override_settings: overrideSettings()
     };
   }
 
@@ -1655,7 +1658,7 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
       resize_mode: parseInt(radioVal("resize_mode") || "0", 10),
       restore_faces: $("img2img_restore_faces").checked,
       tiling: $("img2img_tiling").checked,
-      override_settings: { sd_model_checkpoint: val("sd_model_checkpoint") },
+      override_settings: overrideSettings(),
       init_images: [I2I.baseSrc]
     };
     var m = i2iCurrentMask();
@@ -1818,7 +1821,7 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
     $("i2i_eraser").addEventListener("click", function(){
       I2I.brush = "eraser";
       $("i2i_eraser").classList.add("selected");
-      $("img2img_brush").classList.remove("selected");
+      $("i2i_brush").classList.remove("selected");
     });
     $("i2i_mask_clear").addEventListener("click", function(){ i2iResetMask(I2I.baseW, I2I.baseH); });
 
@@ -1915,14 +1918,79 @@ footer .mono{font-family:ui-monospace,Consolas,monospace}
   }
 
   /* ---------- boot: model list + ping ---------- */
-  fetch("/sdapi/v1/sd-models").then(function(r){return r.json();}).then(function(ms){
-    var sel=$("sd_model_checkpoint");
-    sel.innerHTML="";
-    ms.forEach(function(m){ sel.insertAdjacentHTML("beforeend",'<option value="'+m.title+'">'+m.model_name+"</option>"); });
-    if(ms.length) sel.value=ms[0].title;
-  }).catch(function(){
-    $("sd_model_checkpoint").innerHTML='<option value="anima-base-v1.0.safetensors">anima-base-v1.0.safetensors</option>';
-  });
+  // Anima (Cosmos flow, shift=3) and NoobAI-XL (SDXL, epsilon) want different defaults and
+  // care about different schedulers, so every entry in the model list carries a family.
+  var MODEL_FAMILY = {};
+  var CURRENT_FAMILY = "anima";
+  var FAMILY_DEFAULTS = {
+    anima: {
+      sampler: "Euler", scheduler: "Simple", steps: 30, cfg: 4, w: 1024, h: 1024,
+      hint: "Anima 是 shift=3 的 flow 模型：只有走模型自身 sigma 曲线的调度器才对 —— " +
+            "Simple / Normal / SGM Uniform / DDIM Unified / Beta / Linear Quadratic。" +
+            "Karras / Exponential / KL Optimal 只按 sigma_min..sigma_max 造曲线、忽略 shift，" +
+            "img2img 时起始 sigma 会塌缩（denoise 0.3 只剩约 0.03），结果≈原图。"
+    },
+    sdxl: {
+      sampler: "Euler a", scheduler: "Normal", steps: 28, cfg: 5, w: 832, h: 1216,
+      hint: "NoobAI-XL 是 SDXL（epsilon 预测），官方推荐 Euler a、CFG 5~6、25~30 步、832x1216；" +
+            "提示词前缀建议加 masterpiece, best quality, newest, absurdres, highres。" +
+            "SDXL 下 Karras / Exponential 等调度器是正常的。"
+    }
+  };
+
+  function applyFamily(host, force){
+    var d = FAMILY_DEFAULTS[CURRENT_FAMILY] || FAMILY_DEFAULTS.anima;
+    var pre = (host === "img2img") ? "img2img_" : "";
+    if(force){
+      $(pre + "sampler_name").value = d.sampler;
+      $(pre + "scheduler_name").value = d.scheduler;
+      $(pre + "steps").value = d.steps;    $(pre + "steps_r").value = d.steps;
+      $(pre + "cfg_scale").value = d.cfg;  $(pre + "cfg_scale_r").value = d.cfg;
+      $(pre + "width").value = d.w;        $(pre + "width_r").value = d.w;
+      $(pre + "height").value = d.h;       $(pre + "height_r").value = d.h;
+    }
+    var hint = document.getElementById(host === "img2img" ? "img2img_schedule_hint" : "schedule_hint");
+    if(hint) hint.textContent = d.hint;
+  }
+
+  function overrideSettings(){
+    return {
+      sd_model_checkpoint: val("sd_model_checkpoint"),
+      sd_vae: val("sd_vae"),
+      CLIP_stop_at_last_layers: parseInt(val("clip_stop") || "1", 10)
+    };
+  }
+
+  function loadModelList(){
+    return fetch("/sdapi/v1/sd-models").then(function(r){ return r.json(); }).then(function(ms){
+      var sel = $("sd_model_checkpoint");
+      sel.innerHTML = "";
+      ms.forEach(function(m){
+        MODEL_FAMILY[m.title] = m.family;
+        sel.insertAdjacentHTML("beforeend", '<option value="' + m.title + '">' +
+          m.model_name + " [" + (m.family || "?").toUpperCase() + "]</option>");
+      });
+      if(!ms.length) return;
+      sel.value = ms[0].title;
+      CURRENT_FAMILY = MODEL_FAMILY[sel.value] || "anima";
+      applyFamily("txt2img", true);
+      applyFamily("img2img", true);
+      sel.addEventListener("change", function(){
+        var fam = MODEL_FAMILY[sel.value] || "anima";
+        if(fam === CURRENT_FAMILY) return;
+        CURRENT_FAMILY = fam;   // the two families need different params, so re-default
+        applyFamily("txt2img", true);
+        applyFamily("img2img", true);
+        if(I2I.baseW) i2iUpdateScalePreview();
+      });
+    }).catch(function(){
+      $("sd_model_checkpoint").innerHTML =
+        '<option value="anima-base-v1.0.safetensors">anima-base-v1.0.safetensors [ANIMA]</option>';
+      applyFamily("txt2img", false);
+      applyFamily("img2img", false);
+    });
+  }
+  loadModelList();
 
   fetch("/internal/ping").then(function(r){return r.json();}).then(function(){
     $("ping").textContent="connected";
